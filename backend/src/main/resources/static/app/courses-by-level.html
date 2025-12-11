@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Khóa học theo cấp độ</title>
+  <style>
+    :root{ --brand:#6b5b95; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#fafafa }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--text);background:var(--bg);margin:0}
+    .container{max-width:1200px;margin:24px auto;padding:0 16px}
+    h1{font-size:28px;margin:8px 0 16px}
+    .sub{color:var(--muted);margin-bottom:20px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+    .cover{height:140px;background:linear-gradient(135deg,#e8d6c8,#d9c2b4)}
+    .body{padding:14px}
+    .row{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px;margin-bottom:8px}
+    .badge{border:1px solid var(--border);padding:2px 8px;border-radius:999px;background:#fff;color:#555}
+    .title{font-weight:700;margin:4px 0 8px}
+    .muted{color:var(--muted)}
+    .actions{display:flex;justify-content:flex-end;padding:12px 14px}
+    .btn{background:var(--brand);color:#fff;border:none;padding:8px 12px;border-radius:10px;cursor:pointer;text-decoration:none}
+    .toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+    select{padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:#fff}
+  </style>
+</head>
+<body>
+  <script src="/app/app-common.js"></script>
+  <div id="nav"></div>
+  <div class="container">
+    <h1>Lộ trình thực chiến cho mọi cấp độ</h1>
+    <div class="sub">Học theo dự án, cập nhật công nghệ mới, mentor sát sao.</div>
+
+    <div class="toolbar">
+      <div style="display:flex;gap:8px;align-items:center">
+        <label for="level">Sắp xếp theo cấp độ:</label>
+        <select id="level" onchange="render()">
+          <option value="asc">Từ thấp đến cao (Cơ bản → Nâng cao)</option>
+          <option value="desc">Từ cao xuống thấp (Nâng cao → Cơ bản)</option>
+        </select>
+      </div>
+      <div class="muted" id="count"></div>
+    </div>
+
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <script>
+    mountNav();
+    const API_BASE = '';
+    let COURSES = [];
+
+    function normalize(str){
+      return (str||'').toString().normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+    }
+    function levelOrder(lv){
+      if(lv==null) return 99;
+      const s = normalize(lv);
+      if(/^\d+$/.test(s)) return parseInt(s,10);
+      if(['co ban','beginner','basic','foundation'].includes(s)) return 1;
+      if(['trung cap','intermediate','middle','medium'].includes(s)) return 2;
+      if(['nang cao','advanced','expert'].includes(s)) return 3;
+      return 50;
+    }
+    function levelLabel(lv){
+      const o = levelOrder(lv);
+      if(o===1) return 'Cơ bản';
+      if(o===2) return 'Trung cấp';
+      if(o===3) return 'Nâng cao';
+      return (lv||'Khác');
+    }
+
+    async function load(){
+      const endpoints = ['/api/public/courses','/api/public/courses-sql'];
+      for(const ep of endpoints){
+        try{
+          const res = await fetch(API_BASE+ep,{headers:{Accept:'application/json'}});
+          if(!res.ok) continue;
+          const data = await res.json();
+          if(Array.isArray(data)){
+            COURSES = data.map(c=>({
+              id: c.id ?? c.course_id,
+              title: c.title ?? c.name ?? c.course_title,
+              slug: c.slug ?? c.course_slug ?? c.code,
+              level: c.level ?? c.level_name ?? c.difficulty,
+              durationWeeks: c.duration_weeks ?? c.durationWeeks ?? c.weeks ?? null,
+              lessons: c.lessons_count ?? c.lessonsCount ?? c.total_lessons ?? null,
+              thumbnail: c.thumbnail_url ?? c.image_url ?? c.cover_url ?? null
+            }));
+            break;
+          }
+        }catch(e){}
+      }
+      render();
+    }
+
+    function render(){
+      const grid = document.getElementById('grid');
+      const count = document.getElementById('count');
+      const dir = document.getElementById('level').value;
+      const items = [...COURSES].sort((a,b)=>{
+        const A = levelOrder(a.level), B = levelOrder(b.level);
+        return dir==='asc' ? A-B : B-A;
+      });
+      count.textContent = `${items.length} khóa học`;
+      grid.innerHTML = '';
+      for(const it of items){
+        const el = document.createElement('div');
+        el.className='card';
+        el.innerHTML = `
+          <div class="cover" style="${it.thumbnail?`background:url('${it.thumbnail}') center/cover no-repeat;`:''}"></div>
+          <div class="body">
+            <div class="row">
+              <span class="badge">${levelLabel(it.level)}</span>
+              ${it.durationWeeks?`<span>•</span><span>${it.durationWeeks} tuần</span>`:''}
+            </div>
+            <div class="title">${escapeHtml(it.title||'Khóa học')}</div>
+            <div class="muted">${it.lessons?`${it.lessons} bài học`:' '}</div>
+          </div>
+          <div class="actions">
+            <a class="btn" href="/courses/${encodeURIComponent(it.slug||it.id)}">Xem chi tiết</a>
+          </div>`;
+        grid.appendChild(el);
+      }
+    }
+
+    function escapeHtml(s){
+      return (s||'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+
+    load();
+  </script>
+</body>
+</html>
+

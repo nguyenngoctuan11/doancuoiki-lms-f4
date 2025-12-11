@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>LMS Admin - Redirect</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import {mountNav, token} from './app-common.js';
+    window.addEventListener('DOMContentLoaded', () => {
+      mountNav('nav');
+      const target = token() ? '/app/admin/teacher-reviews.html' : '/app/auth/login.html';
+      setTimeout(() => { window.location.replace(target); }, 120);
+    });
+  </script>
+</head>
+<body>
+  <div id="nav"></div>
+  <div class="container">
+    <div class="card" style="text-align:center;padding:40px">
+      <h2>Đang chuyển đến khu vực đánh giá khóa học</h2>
+      <p class="muted">Nếu trình duyệt không tự chuyển, hãy <a href="/app/admin/teacher-reviews.html">bấm vào đây</a>.</p>
+    </div>
+  </div>
+</body>
+</html>

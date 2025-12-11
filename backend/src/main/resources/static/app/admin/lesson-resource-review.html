@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Duy&#7879;t t&#224;i li&#7879;u b&#224;i h&#7885;c</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, token, requireAuth} from '/app/app-common.js';
+
+    requireAuth(['MANAGER']);
+
+    const state = {
+      courses: [],
+      lessons: [],
+      resources: [],
+      filterCourse: '',
+      filterLesson: '',
+      filterStatus: '',
+      filterVisibility: '',
+      keyword: '',
+      loading: false,
+    };
+
+    function setState(patch) {
+      Object.assign(state, patch);
+      renderFilters();
+      renderSummary();
+      renderList();
+    }
+
+    function renderFilters() {
+      const courseSelect = document.getElementById('filterCourse');
+      if (courseSelect) {
+        courseSelect.innerHTML = ['<option value="">Ch&#7885;n kh&#243;a h&#7885;c</option>']
+          .concat(
+            state.courses.map(
+              (c) => `<option value="${c.id}">${c.title || c.slug || ('Course #' + c.id)}</option>`,
+            ),
+          )
+          .join('');
+        courseSelect.value = state.filterCourse || '';
+      }
+      const lessonSelect = document.getElementById('filterLesson');
+      if (lessonSelect) {
+        if (!state.lessons.length) {
+          lessonSelect.innerHTML = '<option value="">Ch&#432;a c&#243; b&#224;i h&#7885;c</option>';
+        } else {
+          lessonSelect.innerHTML =
+            '<option value="">T&#7845;t c&#7843; b&#224;i h&#7885;c</option>' +
+            state.lessons.map((l) => `<option value="${l.id}">${l.title}</option>`).join('');
+        }
+        lessonSelect.value = state.filterLesson || '';
+      }
+      document.getElementById('filterStatus').value = state.filterStatus || '';
+      document.getElementById('filterVisibility').value = state.filterVisibility || '';
+      document.getElementById('filterKeyword').value = state.keyword || '';
+    }
+
+    function renderSummary() {
+      const total = state.resources.length;
+      const pending = state.resources.filter((r) => (r.status || '').toLowerCase() === 'pending').length;
+      const approved = state.resources.filter((r) => (r.status || '').toLowerCase() === 'approved').length;
+      const rejected = state.resources.filter((r) => (r.status || '').toLowerCase() === 'rejected').length;
+      const hidden = state.resources.filter((r) => (r.status || '').toLowerCase() === 'hidden').length;
+      const summaryMap = {
+        summaryTotal: total,
+        summaryPending: pending,
+        summaryApproved: approved,
+        summaryRejected: rejected,
+        summaryHidden: hidden,
+      };
+      Object.entries(summaryMap).forEach(([key, value]) => {
+        const node = document.getElementById(key);
+        if (node) node.textContent = value;
+      });
+    }
+
+    function renderList() {
+      const host = document.getElementById('resourceList');
+      if (!host) return;
+      if (state.loading) {
+        host.innerHTML = '<div class="empty">&#272;ang t&#7843;i danh s&#225;ch...</div>';
+        return;
+      }
+      if (!state.resources.length) {
+        host.innerHTML = '<div class="empty empty-card">Ch&#432;a c&#243; t&#224;i li&#7879;u n&#224;o kh&#7897;p b&#7897; l&#7885;c.</div>';
+        return;
+      }
+      host.innerHTML = state.resources
+        .map((item) => {
+          const status = (item.status || 'pending').toLowerCase();
+          const badge =
+            status === 'approved'
+              ? 'badge-success'
+              : status === 'rejected'
+              ? 'badge-danger'
+              : status === 'hidden'
+              ? 'badge-ghost'
+              : 'badge-warning';
+          return `
+            <article class="card resource-card">
+              <header class="resource-header">
+                <div>
+                  <p class="resource-title">${item.title || 'T&#224;i li&#7879;u'}</p>
+                  <p class="muted tiny">${item.description || ''}</p>
+                  <div class="muted tiny">
+                    <span>Kh&#243;a: ${item.courseTitle || item.courseId || '--'}</span>
+                    <span>&bull;</span>
+                    <span>B&#224;i: ${item.lessonTitle || item.lessonId || '--'}</span>
+                  </div>
+                  <div class="muted tiny">
+                    <span>T&#225;c gi&#7843;: ${item.createdBy?.name || '--'}</span>
+                    <span>&bull;</span>
+                    <span>T&#7841;o: ${formatDate(item.createdAt)}</span>
+                  </div>
+                </div>
+                <span class="badge ${badge}">${status}</span>
+              </header>
+              <section class="resource-meta">
+                <span>Lo&#7841;i: ${item.sourceType === 'link' ? 'Li&#234;n k&#7871;t' : 'T&#7879;p tin'}</span>
+                <span>Ph&#7841;m vi: ${item.visibility || 'enrolled'}</span>
+                <span>T&#7843;i: ${item.downloadCount || 0}</span>
+              </section>
+              <footer class="resource-actions">
+                <div class="action-buttons">
+                  <button class="btn ghost btn-xs" data-action="open" data-id="${item.id}">M&#7903;</button>
+                  <button class="btn btn-xs" data-action="approve" data-id="${item.id}">Duy&#7879;t</button>
+                  <button class="btn btn-xs danger" data-action="reject" data-id="${item.id}">T&#7915; ch&#7889;i</button>
+                  <button class="btn btn-xs border-stone-300" data-action="hide" data-id="${item.id}">${status === 'hidden' ? 'Hi&#7879;n' : '&#7848;n'}</button>
+                </div>
+              </footer>
+            </article>
+          `;
+        })
+        .join('');
+      host.querySelectorAll('button[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+          const id = ev.currentTarget.getAttribute('data-id');
+          const action = ev.currentTarget.getAttribute('data-action');
+          handleAction(id, action);
+        });
+      });
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      try {
+        return new Date(value).toLocaleString('vi-VN', {dateStyle: 'short', timeStyle: 'short'});
+      } catch {
+        return value;
+      }
+    }
+
+    async function fetchCourses() {
+      try {
+        const list = await api('/api/teacher/courses?status=published');
+        setState({ courses: Array.isArray(list) ? list : [] });
+      } catch (err) {
+        console.error(err);
+        setState({ courses: [] });
+      }
+    }
+
+    async function fetchLessons(courseId) {
+      if (!courseId) {
+        setState({ lessons: [], filterLesson: '' });
+        return;
+      }
+      try {
+        const res = await fetch(`/api/public/courses/${courseId}/detail-sql`);
+        const data = await res.json();
+        const lessons =
+          (data.modules || []).flatMap((mod) =>
+            (mod.lessons || []).map((lesson) => ({
+              id: lesson.id,
+              title: `${mod.title || 'Module'} - ${lesson.title || 'Lesson'}`,
+            })),
+          ) || [];
+        setState({ lessons, filterLesson: '' });
+      } catch (err) {
+        console.error(err);
+        setState({ lessons: [], filterLesson: '' });
+      }
+    }
+
+    async function fetchResources() {
+      setState({ loading: true });
+      const params = new URLSearchParams();
+      if (state.filterCourse) params.set('courseId', state.filterCourse);
+      if (state.filterLesson) params.set('lessonId', state.filterLesson);
+      if (state.filterStatus) params.set('status', state.filterStatus);
+      if (state.filterVisibility) params.set('visibility', state.filterVisibility);
+      if (state.keyword) params.set('keyword', state.keyword.trim());
+      try {
+        const list = await api(`/api/admin/lesson-resources?${params.toString()}`);
+        setState({ resources: Array.isArray(list) ? list : [], loading: false });
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || 'Kh&#244;ng t&#7843;i &#273;&#432;&#7907;c danh s&#225;ch t&#224;i li&#7879;u.');
+        setState({ resources: [], loading: false });
+      }
+    }
+
+    async function handleAction(id, action) {
+      if (!id || !action) return;
+      if (action === 'open') {
+        openResource(id);
+        return;
+      }
+      let status = null;
+      if (action === 'approve') status = 'approved';
+      if (action === 'reject') status = 'rejected';
+      if (action === 'hide') {
+        const current = state.resources.find((r) => String(r.id) === String(id));
+        status = current?.status === 'hidden' ? 'pending' : 'hidden';
+      }
+      if (!status) return;
+      try {
+        await api(`/api/teacher/lesson-resources/${id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        });
+        fetchResources();
+      } catch (err) {
+        alert(err?.message || 'Kh&#244;ng c&#7853;p nh&#7853;t &#273;&#432;&#7907;c tr&#7841;ng th&#225;i.');
+      }
+    }
+
+    async function openResource(id) {
+      try {
+        const payload = await api(`/api/lesson-resources/${id}/download`);
+        const url = payload?.redirectUrl;
+        if (url) {
+          const absolute = url.startsWith('http') ? url : `${location.origin}${url}`;
+          window.open(absolute, '_blank');
+        } else {
+          alert('Kh&#244;ng t&#236;m th&#7845;y &#273;&#432;&#7901;ng d&#7851;n t&#224;i li&#7879;u.');
+        }
+      } catch (err) {
+        alert(err?.message || 'Kh&#244;ng th&#7875; m&#7903; t&#224;i li&#7879;u.');
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      mountNav('nav', 'compact');
+      mountAdminMenu('adminMenu', 'lesson-resource-review');
+      mountAdminUser('adminUserCard');
+      document.getElementById('filterCourse').addEventListener('change', (e) => {
+        setState({ filterCourse: e.target.value, filterLesson: '' });
+        fetchLessons(e.target.value);
+      });
+      document.getElementById('filterLesson').addEventListener('change', (e) => setState({ filterLesson: e.target.value }));
+      document.getElementById('filterStatus').addEventListener('change', (e) => setState({ filterStatus: e.target.value }));
+      document.getElementById('filterVisibility').addEventListener('change', (e) => setState({ filterVisibility: e.target.value }));
+      document.getElementById('filterKeyword').addEventListener('input', (e) => setState({ keyword: e.target.value }));
+      document.getElementById('btnApply').addEventListener('click', fetchResources);
+      document.getElementById('btnReset').addEventListener('click', () => {
+        setState({ filterCourse: '', filterLesson: '', filterStatus: '', filterVisibility: '', keyword: '' });
+        fetchLessons('');
+        fetchResources();
+      });
+      fetchCourses().then(fetchResources);
+    });
+  </script>
+  <style>
+    .resource-card { margin-bottom: 16px; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); padding: 16px; background: #fff; }
+    .resource-header { display:flex; justify-content:space-between; gap:12px; }
+    .resource-title { font-size:1rem; font-weight:600; color:#0f172a; }
+    .resource-meta { display:flex; flex-wrap:wrap; gap:12px; font-size:.85rem; color:#475569; margin:12px 0; }
+    .resource-actions { display:flex; justify-content:flex-end; }
+    .action-buttons { display:flex; gap:8px; }
+    .filters-card{
+      border-radius:24px;
+      border:1px solid rgba(223,200,178,0.6);
+      padding:20px;
+      background:#fffdf8;
+      box-shadow:0 18px 40px rgba(77,47,28,0.08);
+    }
+    .filters-row{
+      display:flex;
+      flex-wrap:wrap;
+      gap:18px;
+      align-items:flex-end;
+    }
+    .filters-row .filter-field{
+      flex:1 1 200px;
+      min-width:190px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .filters-row label{
+      font-size:.85rem;
+      font-weight:600;
+      color:#7c5135;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .filters-actions{
+      margin-top:16px;
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .summary-grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+      gap:16px;
+      margin-top:16px;
+    }
+    .stat-card{
+      border-radius:20px;
+      border:1px solid rgba(223,200,178,0.6);
+      padding:16px;
+      background:#fffdf9;
+      box-shadow:0 18px 30px rgba(77,47,28,0.12);
+    }
+    .stat-card .muted{
+      font-size:.78rem;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      color:#9f7c61;
+      margin:0;
+    }
+    .stat-value{
+      font-size:1.8rem;
+      font-weight:700;
+      color:#2f190b;
+      margin-top:4px;
+    }
+  </style>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Ph&#234; duy&#7879;t</span>
+        <strong>Duy&#7879;t t&#224;i li&#7879;u</strong>
+        <p class="muted">Theo d&#245;i t&#224;i li&#7879;u b&#224;i h&#7885;c c&#7911;a gi&#7843;ng vi&#234;n.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">&larr; V&#7873; trang t&#7893;ng quan</a>
+      </div>
+    </aside>
+
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted">Theo d&#245;i &amp; ph&#234; duy&#7879;t</p>
+          <h1>T&#224;i li&#7879;u kh&#243;a h&#7885;c</h1>
+        </div>
+
+        <section class="card filters-card">
+          <div class="filters-row">
+            <div class="filter-field">
+              <label>Kh&#243;a h&#7885;c</label>
+              <select id="filterCourse" class="input"></select>
+            </div>
+            <div class="filter-field">
+              <label>B&#224;i h&#7885;c</label>
+              <select id="filterLesson" class="input">
+                <option value="">Ch&#432;a c&#243; b&#224;i h&#7885;c</option>
+              </select>
+            </div>
+            <div class="filter-field">
+              <label>Tr&#7841;ng th&#225;i</label>
+              <select id="filterStatus" class="input">
+                <option value="">T&#7845;t c&#7843;</option>
+                <option value="pending">&#272;ang ch&#7901;</option>
+                <option value="approved">&#272;&#227; duy&#7879;t</option>
+                <option value="rejected">T&#7915; ch&#7889;i</option>
+                <option value="hidden">&#7848;n</option>
+              </select>
+            </div>
+            <div class="filter-field">
+              <label>Ph&#7841;m vi</label>
+              <select id="filterVisibility" class="input">
+                <option value="">T&#7845;t c&#7843;</option>
+                <option value="public">C&#244;ng khai</option>
+                <option value="enrolled">H&#7885;c vi&#234;n</option>
+                <option value="instructors">Gi&#7843;ng vi&#234;n</option>
+              </select>
+            </div>
+            <div class="filter-field">
+              <label>T&#7915; kh&#243;a</label>
+              <input id="filterKeyword" class="input" placeholder="T&#234;n t&#224;i li&#7879;u, gi&#7843;ng vi&#234;n..."/>
+            </div>
+          </div>
+          <div class="filters-actions">
+            <button id="btnApply" class="btn btn-primary">L&#7885;c</button>
+            <button id="btnReset" class="btn ghost">L&#224;m m&#7899;i</button>
+          </div>
+        </section>
+
+        <section class="grid summary-grid mt-4">
+          <div class="stat-card">
+            <div>
+              <p class="muted tiny">T&#7893;ng</p>
+              <p class="stat-value" id="summaryTotal">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div>
+              <p class="muted tiny">&#272;ang ch&#7901;</p>
+              <p class="stat-value" id="summaryPending">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div>
+              <p class="muted tiny">&#272;&#227; duy&#7879;t</p>
+              <p class="stat-value" id="summaryApproved">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div>
+              <p class="muted tiny">T&#7915; ch&#7889;i</p>
+              <p class="stat-value" id="summaryRejected">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div>
+              <p class="muted tiny">&#7848;n</p>
+              <p class="stat-value" id="summaryHidden">0</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card mt-4">
+          <div class="list-header">
+            <div>
+              <p class="muted tiny">Danh s&#225;ch</p>
+              <h3>T&#224;i li&#7879;u b&#224;i h&#7885;c</h3>
+            </div>
+          </div>
+          <div id="resourceList" class="mt-4"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

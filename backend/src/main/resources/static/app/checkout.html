@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Thanh toán khoá học</title>
+  <style>
+    :root{ --brand:#6b5b95; --muted:#6b7280; --border:#e5e7eb; --bg:#fafafa; --ok:#16a34a; --warn:#ca8a04 }
+    body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#fff;color:#111827}
+    .container{max-width:960px;margin:24px auto;padding:0 16px}
+    .card{border:1px solid var(--border);border-radius:12px;padding:16px;background:#fff}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .price{font-size:24px;font-weight:800;color:#111827}
+    .muted{color:var(--muted)}
+    .btn{background:var(--brand);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
+    .btn.secondary{background:#8b5cf6}
+    .btn.ghost{background:#fff;border:1px solid var(--border);color:#111827}
+    .method{display:flex;gap:8px;align-items:center;margin:6px 0}
+    input[type=text], input[type=email]{width:100%;padding:8px;border:1px solid var(--border);border-radius:8px}
+    .cover{height:160px;border-radius:12px;background:linear-gradient(135deg,#e8d6c8,#d9c2b4);overflow:hidden}
+    .cover img{width:100%;height:100%;object-fit:cover}
+    .note{background:#f9fafb;border:1px dashed var(--border);padding:10px;border-radius:8px;color:#374151}
+  </style>
+</head>
+<body>
+  <script src="/app/app-common.js"></script>
+  <div id="nav"></div>
+  <div class="container">
+    <h2>Thanh toán khoá học</h2>
+    <div id="status" class="muted" style="margin-bottom:8px"></div>
+
+    <div class="row">
+      <div class="card">
+        <div id="cover" class="cover"></div>
+        <h3 id="title" style="margin:12px 0 4px">Khoá học</h3>
+        <div id="desc" class="muted" style="margin-bottom:8px"></div>
+        <div class="price" id="price">0 đ</div>
+      </div>
+
+      <div class="card">
+        <h3>Thông tin người mua</h3>
+        <div class="row" style="grid-template-columns:1fr 1fr;margin-top:8px">
+          <div>
+            <label>Họ tên</label>
+            <input id="buyerName" type="text" placeholder="Nguyễn Văn A" />
+          </div>
+          <div>
+            <label>Email</label>
+            <input id="buyerEmail" type="email" placeholder="email@example.com" />
+          </div>
+        </div>
+        <h3 style="margin-top:16px">Phương thức thanh toán</h3>
+        <label class="method"><input type="radio" name="pm" value="VNPAY" checked /> VNPay / Thẻ</label>
+        <label class="method"><input type="radio" name="pm" value="MOMO" /> MoMo</label>
+        <label class="method"><input type="radio" name="pm" value="BANK" /> Chuyển khoản ngân hàng</label>
+        <label class="method"><input type="radio" name="pm" value="COD" /> Thanh toán sau (đăng ký trước)</label>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn" onclick="pay()">Thanh toán</button>
+          <button class="btn ghost" onclick="history.back()">Quay lại</button>
+        </div>
+        <div id="note" class="note" style="margin-top:12px;display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mountNav();
+    const API_BASE = '';
+    const qs = new URLSearchParams(location.search);
+    const courseKey = qs.get('course');
+    const statusEl = document.getElementById('status');
+    const coverEl = document.getElementById('cover');
+    const titleEl = document.getElementById('title');
+    const descEl = document.getElementById('desc');
+    const priceEl = document.getElementById('price');
+    const noteEl = document.getElementById('note');
+    let course = null;
+
+    function money(n){ try{ return Number(n).toLocaleString('vi-VN') + ' đ'; }catch(e){ return n+' đ'; } }
+    function resolveThumb(u){
+      if(!u) return null; let s=String(u).trim().replace(/\\\\/g,'/');
+      if(/^https?:\/\//i.test(s)||s.startsWith('data:')) return s; if(!s.startsWith('/')) s='/'+s; return (API_BASE||'')+s;
+    }
+
+    async function load(){
+      if(!courseKey){ statusEl.textContent='Thiếu tham số course.'; return; }
+      statusEl.textContent='Đang tải khoá học…';
+      const tries = [
+        `/api/public/courses/detail/${encodeURIComponent(courseKey)}`,
+        `/api/public/courses/detail-sql/${encodeURIComponent(courseKey)}`,
+        `/api/public/course/${encodeURIComponent(courseKey)}`
+      ];
+      for(const p of tries){
+        try{
+          const r = await fetch(API_BASE+p,{headers:{Accept:'application/json'}});
+          if(!r.ok) continue; const j=await r.json(); if(j){ course=j; break; }
+        }catch(e){}
+      }
+      if(!course){
+        try{
+          const r = await fetch(API_BASE+`/api/public/courses`); if(r.ok){ const list = await r.json();
+            if(Array.isArray(list)) course = list.find(x=> (x.slug||x.course_slug||x.code)==courseKey || String(x.id||x.course_id)==courseKey);
+          }
+        }catch(e){}
+      }
+      if(!course){ statusEl.textContent='Không tìm thấy khoá học.'; return; }
+      statusEl.textContent='';
+      const name = course.title || course.name || course.course_title || 'Khoá học';
+      const desc = course.description || course.summary || course.short_desc || '';
+      const price = course.price || course.tuition || course.amount || 0;
+      const thumb = resolveThumb(course.thumbnail_url||course.thumbnailUrl||course.thumbnail_path||course.image_url||course.cover_url);
+      titleEl.textContent = name;
+      descEl.textContent = desc;
+      priceEl.textContent = money(price);
+      coverEl.innerHTML = thumb? `<img src="${thumb}" alt="${name}">` : '';
+    }
+
+    async function pay(){
+      const name = document.getElementById('buyerName').value.trim();
+      const email = document.getElementById('buyerEmail').value.trim();
+      const pm = document.querySelector('input[name="pm"]:checked').value;
+      if(!course){ alert('Chưa có dữ liệu khoá học'); return; }
+      const courseId = course.id || course.course_id;
+      const payload = {
+        course_id: courseId,
+        course_key: courseKey,
+        buyer_name: name,
+        buyer_email: email,
+        method: pm,
+        amount: course.price || course.tuition || course.amount || 0,
+        return_url: location.origin + '/payment/success',
+        cancel_url: location.origin + '/payment/fail'
+      };
+
+      // Thử gọi endpoint thanh toán nếu backend có
+      try{
+        const r = await fetch(API_BASE+'/api/payments/checkout',{
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+        });
+        if(r.ok){
+          const j = await r.json();
+          if(j && j.paymentUrl){ location.href = j.paymentUrl; return; }
+          if(j && (j.status==='PAID' || j.paid===true)){
+            alert('Thanh toán thành công!'); location.href='/'; return;
+          }
+        }
+      }catch(e){}
+
+      // Fallback: nếu không có cổng thanh toán, thực hiện đăng ký (enroll)
+      try{
+        const r2 = await fetch(API_BASE+`/api/courses/${courseId}/enroll`,{method:'POST'});
+        if(r2.ok){ noteEl.style.display='block'; noteEl.textContent='Đã đăng ký khoá học. Vui lòng kiểm tra trang Sinh viên.'; return; }
+      }catch(e){}
+
+      noteEl.style.display='block';
+      noteEl.innerHTML = 'Không gọi được cổng thanh toán. Vui lòng liên hệ hỗ trợ hoặc chuyển khoản theo hướng dẫn.';
+    }
+
+    load();
+  </script>
+</body>
+</html>
+

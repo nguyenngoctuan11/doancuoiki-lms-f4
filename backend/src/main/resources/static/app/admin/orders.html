@@ -1,0 +1,158 @@
+﻿<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quản lý đơn khóa học</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .orders-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    .orders-toolbar .input { min-width: 180px; }
+    .status-badge { display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; background:#111827; color:#e5e7eb; font-size:12px; letter-spacing:0.02em; text-transform:uppercase; }
+    .status-badge.pending { background:#fbbf24; color:#1f2937; }
+    .status-badge.approved, .status-badge.paid, .status-badge.completed { background:#34d399; color:#0b172a; }
+    .status-badge.cancelled, .status-badge.failed { background:#f87171; color:#0b172a; }
+    .table tr:hover { background-color: rgba(255,255,255,0.02); }
+    td.actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;}
+  </style>
+  <script type="module">
+    import { mountNav, mountAdminMenu, mountAdminUser, requireAuth, api } from '/app/app-common.js';
+
+    let cachedOrders = [];
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!requireAuth(['MANAGER'])) return;
+      mountNav('nav', 'compact');
+      mountAdminMenu('adminMenu', 'orders');
+      mountAdminUser('adminUserCard');
+      bindFilters();
+      loadOrders();
+    });
+
+    function bindFilters() {
+      document.getElementById('filterCourse')?.addEventListener('input', renderOrders);
+      document.getElementById('filterStatus')?.addEventListener('change', renderOrders);
+      document.getElementById('btnRefresh')?.addEventListener('click', loadOrders);
+    }
+
+    async function loadOrders() {
+      const body = document.getElementById('ordersBody');
+      body.innerHTML = '<tr><td colspan="8">Đang tải...</td></tr>';
+      try {
+        cachedOrders = await api('/api/admin/orders');
+        renderOrders();
+      } catch (e) {
+        body.innerHTML = `<tr><td colspan="8">Lỗi tải đơn: ${e?.message || e}</td></tr>`;
+      }
+    }
+
+    function renderOrders() {
+      const body = document.getElementById('ordersBody');
+      const q = (document.getElementById('filterCourse')?.value || '').toLowerCase();
+      const st = (document.getElementById('filterStatus')?.value || '').toLowerCase();
+
+      const rows = (cachedOrders || []).filter((o) => {
+        const matchCourse = !q || (o.courseTitle || '').toLowerCase().includes(q);
+        const matchStatus = !st || (o.status || '').toLowerCase() === st;
+        return matchCourse && matchStatus;
+      });
+
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="8">Không có đơn</td></tr>'; return; }
+
+      body.innerHTML = rows.map((o) => `
+        <tr>
+          <td>${o.id}</td>
+          <td>${o.code || ''}</td>
+          <td>${o.fullName || o.email || ''}</td>
+          <td>${o.courseTitle || o.courseId || ''}</td>
+          <td>${o.amount ?? ''}</td>
+          <td><span class="status-badge ${(o.status || '').toLowerCase()}">${(o.status || '').toUpperCase()}</span></td>
+          <td>${o.method || ''}</td>
+          <td class="actions">
+            <button class="btn xs" data-id="${o.id}" data-action="approve">Duyệt</button>
+            <button class="btn xs ghost" data-id="${o.id}" data-action="cancel">Hủy</button>
+          </td>
+        </tr>
+      `).join('');
+
+      body.querySelectorAll('button[data-action]').forEach((btn) => {
+        btn.addEventListener('click', () => onAction(btn.dataset.id, btn.dataset.action));
+      });
+    }
+
+    async function onAction(id, action) {
+      const url = `/api/admin/orders/${id}/${action}`;
+      try {
+        await api(url, { method: 'POST' });
+        loadOrders();
+      } catch (e) {
+        alert(`Không thể ${action} đơn: ${e?.message || e}`);
+      }
+    }
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Nội dung</span>
+        <strong>Quản lý đơn khóa học</strong>
+        <p class="muted">Duyệt / hủy đơn thanh toán, kích hoạt khóa học cho học viên.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="card">
+          <div class="flex-between" style="gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+            <div class="metric-title">
+              <h1>Đơn đặt khóa học</h1>
+              <span class="muted small">Duyệt / hủy đơn, kích hoạt khóa học</span>
+            </div>
+            <div class="orders-toolbar">
+              <select id="filterCourse" class="input" style="min-width:180px;">
+                <option value="">Tất cả khóa học</option>
+                <option value="350+">350+</option>
+                <option value="450+">450+</option>
+                <option value="550+">550+</option>
+                <option value="650+">650+</option>
+                <option value="750+">750+</option>
+                <option value="850+">850+</option>
+                <option value="kỹ năng">Kỹ năng</option>
+                <option value="từ vựng">Từ vựng</option>
+                <option value="nghe">Nghe</option>
+                <option value="nói">Nói</option>
+                <option value="viết">Viết</option>
+              </select>
+              <select id="filterStatus" class="input">
+                <option value="">Tất cả trạng thái</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="paid">Paid</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+              <button class="btn ghost" id="btnRefresh">Làm mới</button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Mã đơn</th><th>Học viên</th><th>Khóa học</th><th>Số tiền</th><th>Trạng thái</th><th>PTTT</th><th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

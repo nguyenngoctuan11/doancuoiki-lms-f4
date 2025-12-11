@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quản lý khóa học</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .hero {
+      margin-bottom: 32px;
+      border-radius: 32px;
+      padding: 32px;
+      color: #6b3e2e;
+      background: radial-gradient(circle at 20% 20%, rgba(236, 197, 152, 0.55), transparent 62%),
+        linear-gradient(135deg, #ffe8d6, #fcd0ba);
+      box-shadow: 0 25px 80px rgba(249, 115, 22, 0.25);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(255,255,255,0.45), transparent 60%);
+      pointer-events: none;
+    }
+    .hero-content {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      justify-content: space-between;
+    }
+    .hero h1 { margin: 6px 0 10px; font-size: 32px; }
+    .hero p { max-width: 600px; line-height: 1.5; }
+    .hero-stats { display: flex; gap: 16px; flex-wrap: wrap; }
+    .hero-stat {
+      min-width: 160px;
+      padding: 16px 20px;
+      border-radius: 22px;
+      background: rgba(255,255,255,0.85);
+      text-align: center;
+      color: #6b3e2e;
+    }
+    .hero-stat strong { display: block; font-size: 32px; margin-bottom: 4px; }
+    .eyebrow-light { text-transform: uppercase; letter-spacing: 0.3em; font-size: 12px; color: rgba(107,62,46,0.7); }
+    .panel-eyebrow { text-transform: uppercase; letter-spacing: 0.3em; font-size: 12px; color: rgba(248,250,252,0.6); }
+    .panel-title { font-size: 20px; font-weight: 600; color: #f8fafc; margin: 4px 0 0; }
+    .panel-sub { color: rgba(248,250,252,0.7); font-size: 14px; margin: 4px 0 0; }
+    .panel {
+      border-radius: 32px;
+      border: 1px solid rgba(148,163,184,0.25);
+      background: rgba(15, 23, 42, 0.55);
+      padding: 28px;
+      box-shadow: 0 25px 90px rgba(15,23,42,0.35);
+      backdrop-filter: blur(12px);
+    }
+    .panel-toolbar {
+      display:flex;
+      flex-wrap:wrap;
+      gap:16px;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:18px;
+    }
+    .panel-toolbar .actions {
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:flex-end;
+    }
+    .panel-toolbar input, .panel-toolbar select {
+      border-radius: 999px;
+      border:1px solid rgba(248,250,252,0.2);
+      background:rgba(15,23,42,0.3);
+      color:#f8fafc;
+      padding:10px 16px;
+      min-width:200px;
+    }
+    .panel-toolbar input::placeholder {
+      color:rgba(248,250,252,0.6);
+    }
+    .cards {
+      max-height: 65vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding-right: 8px;
+    }
+    .course-card {
+      display:flex;
+      gap:18px;
+      padding:18px;
+      border-radius:26px;
+      border:1px solid rgba(148,163,184,0.3);
+      background:rgba(255,255,255,0.05);
+      transition:transform .2s ease,border .2s ease;
+    }
+    .course-card:hover {
+      transform:translateY(-4px);
+      border-color:rgba(94,234,212,0.5);
+    }
+    .course-thumb {
+      width:120px;
+      height:80px;
+      border-radius:20px;
+      overflow:hidden;
+      flex-shrink:0;
+      background:rgba(148,163,184,0.25);
+    }
+    .course-thumb img { width:100%; height:100%; object-fit:cover; }
+    .course-info { flex:1; display:flex; flex-direction:column; gap:6px; color:#f8fafc; }
+    .course-info h3 { margin:0; font-size:18px; }
+    .course-slug { font-size:12px; color:rgba(248,250,252,0.65); }
+    .course-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; }
+    .chip {
+      border-radius:999px;
+      padding:4px 12px;
+      border:1px solid rgba(248,250,252,0.25);
+      color:#e2e8f0;
+      background:rgba(248,250,252,0.05);
+    }
+    .chip.level { border-color:rgba(94,234,212,0.4); color:#5eead4; background:rgba(15,118,110,0.15); }
+    .chip.price { border-color:rgba(248,250,252,0.2); background:rgba(248,250,252,0.08); font-weight:600; }
+    .actions {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:flex-end;
+      justify-content:flex-end;
+    }
+    .actions .btn { border-radius:999px; padding:8px 16px; }
+    .actions .btn.ghost { border-color:rgba(248,250,252,0.2); }
+    .table-empty {
+      margin-top:16px;
+      border-radius:24px;
+      border:1px dashed rgba(248,250,252,0.25);
+      text-align:center;
+      padding:28px;
+      color:rgba(248,250,252,0.7);
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, requireAuth, qs} from './app-common.js';
+
+    const el = (id) => document.getElementById(id);
+    const refs = {
+      list: () => el('courseList'),
+      empty: () => el('courseEmpty'),
+      listMsg: () => el('listMsg'),
+      banner: () => el('statusBanner'),
+      stats: () => el('statPublished'),
+      pending: () => el('statPending'),
+      total: () => el('statTotal'),
+      search: () => el('searchInput'),
+      levelFilter: () => el('filterLevel')
+    };
+
+    let ALL_COURSES = [];
+
+    const formatPrice = (course)=>{
+      const flag = (course?.isFree ?? course?.is_free ?? false) || course?.price == null;
+      if(flag) return '<span class="chip price">Miễn phí</span>';
+      const money = new Intl.NumberFormat('vi-VN').format(course.price);
+      return `<span class="chip price">${money} đ</span>`;
+    };
+
+    function maybeShowBanner(){
+      const updated = qs('updated');
+      if(updated){
+        refs.banner().hidden = false;
+        refs.banner().textContent = updated === 'created'
+          ? 'Đã tạo khóa học mới.'
+          : 'Đã cập nhật khóa học.';
+        history.replaceState({}, '', location.pathname);
+      }
+    }
+
+    async function loadCourses(){
+      refs.listMsg().textContent = 'Đang tải danh sách...';
+      try{
+        ALL_COURSES = await api('/api/courses?limit=200');
+        updateStats();
+        renderList();
+        refs.listMsg().textContent = '';
+      }catch(err){
+        refs.listMsg().textContent = err.message || err;
+      }
+    }
+
+    function updateStats(){
+      const total = ALL_COURSES.length;
+      const published = ALL_COURSES.filter(c => (c.status||'').toLowerCase()==='published').length;
+      const pending = ALL_COURSES.filter(c => (c.approvalStatus||'').toLowerCase()==='pending').length;
+      refs.total().textContent = total;
+      refs.stats().textContent = published;
+      refs.pending().textContent = pending;
+    }
+
+    function matchesFilter(course){
+      const q = refs.search().value.trim().toLowerCase();
+      const level = refs.levelFilter().value;
+      const hay = `${course.title||''} ${course.slug||''} ${course.status||''} ${course.approvalStatus||''}`.toLowerCase();
+      const keywordMatch = !q || hay.includes(q);
+      const levelMatch = level === 'all' || (course.level||'').toLowerCase().includes(level.toLowerCase());
+      return keywordMatch && levelMatch;
+    }
+
+    function renderList(){
+      const list = refs.list();
+      const filtered = ALL_COURSES.filter(matchesFilter);
+      list.innerHTML = '';
+      if(!filtered.length){
+        refs.empty().hidden = false;
+        return;
+      }
+      refs.empty().hidden = true;
+      filtered.forEach(course => {
+        const card = document.createElement('article');
+        card.className = 'course-card';
+        card.innerHTML = `
+          <div class="course-thumb">
+            ${course.thumbnailUrl ? `<img src="${course.thumbnailUrl}" alt="${course.title}">` : ''}
+          </div>
+          <div class="course-info">
+            <div class="course-head">
+              <div>
+                <p class="course-slug">#${course.id}</p>
+                <h3>${course.title || '--'}</h3>
+                <p class="course-slug">${course.slug || ''}</p>
+              </div>
+            </div>
+            <div class="chips">
+              ${course.level ? `<span class="chip level">${course.level}</span>` : ''}
+              ${course.language ? `<span class="chip">${course.language}</span>` : ''}
+              <span class="chip">${course.createdByEmail || '—'}</span>
+              <span class="chip">${course.createdAt ? String(course.createdAt).replace('T',' ') : ''}</span>
+            </div>
+            <div class="chips">
+              ${formatPrice(course)}
+              <span class="chip">Trạng thái: ${(course.status||'').toUpperCase()}</span>
+              <span class="chip">Duyệt: ${course.approvalStatus || '--'}</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn ghost tiny edit-btn" data-id="${course.id}" data-slug="${course.slug||''}">Chỉnh sửa</button>
+            <button class="btn ghost tiny danger delete-btn" data-id="${course.id}">Xóa</button>
+          </div>
+        `;
+        list.appendChild(card);
+      });
+
+      list.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.onclick = ()=>{
+          const slug = btn.dataset.slug || '';
+          location.href = `/app/course.html?id=${btn.dataset.id}&slug=${encodeURIComponent(slug)}`;
+        };
+      });
+      list.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.onclick = ()=> removeCourse(Number(btn.dataset.id));
+      });
+    }
+
+    async function removeCourse(id){
+      if(!confirm(`Xóa khóa học #${id}?`)) return;
+      try{
+        await api(`/api/courses/${id}`, { method:'DELETE' });
+        loadCourses();
+      }catch(err){
+        alert(err.message || err);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav','sidebar');
+      if(!requireAuth(['MANAGER'])) return;
+      mountAdminMenu('adminMenu','/app/courses.html');
+      mountAdminUser('adminUserCard');
+      maybeShowBanner();
+      loadCourses();
+      document.getElementById('refreshBtn').onclick = loadCourses;
+      refs.search().addEventListener('input', renderList);
+      refs.levelFilter().addEventListener('change', renderList);
+    });
+  </script>
+</head>
+<body>
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div id="nav" data-variant="compact"></div>
+      <div class="admin-brand">
+        <span class="eyebrow">Manager</span>
+        <strong>Quản trị nội dung</strong>
+      </div>
+      <div id="adminMenu" class="admin-menu"></div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+    </aside>
+    <main class="admin-main">
+      <div class="hero">
+        <div class="hero-content">
+          <div>
+            <p class="eyebrow-light">Studio quản trị</p>
+            <h1>Danh sách khóa học</h1>
+            <p>Biến danh sách quản lý khô khan thành trải nghiệm có cảm hứng bằng cách nhóm thông tin rõ ràng, card sinh động và thanh cuộn mềm mại.</p>
+          </div>
+          <div class="hero-stats">
+            <div class="hero-stat">
+              <strong id="statTotal">0</strong>
+              <span>Khóa học</span>
+            </div>
+            <div class="hero-stat">
+              <strong id="statPublished">0</strong>
+              <span>Đã publish</span>
+            </div>
+            <div class="hero-stat">
+              <strong id="statPending">0</strong>
+              <span>Chờ duyệt</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="statusBanner" class="status-banner" hidden></div>
+
+      <section class="panel">
+        <div class="panel-toolbar">
+          <div>
+            <p class="panel-eyebrow">Danh sách</p>
+            <p class="panel-title">Bản nháp & trạng thái duyệt</p>
+            <p class="panel-sub">Cuộn mềm mại, thao tác nhanh.</p>
+          </div>
+          <div class="actions">
+            <input id="searchInput" type="search" placeholder="Tìm theo tiêu đề, slug, trạng thái..."/>
+            <select id="filterLevel">
+              <option value="all">Mọi cấp độ</option>
+              <option value="beginner">Beginner / Cơ bản</option>
+              <option value="intermediate">Intermediate / Trung cấp</option>
+              <option value="advanced">Advanced / Nâng cao</option>
+              <option value="350+">TOEIC 350+</option>
+              <option value="450+">TOEIC 450+</option>
+              <option value="550+">TOEIC 550+</option>
+              <option value="650+">TOEIC 650+</option>
+              <option value="750+">TOEIC 750+</option>
+              <option value="850+">TOEIC 850+</option>
+              <option value="950+">TOEIC 950+</option>
+            </select>
+            <button class="btn ghost" id="refreshBtn">Làm mới</button>
+          </div>
+        </div>
+
+        <div id="courseList" class="cards"></div>
+        <div id="courseEmpty" class="table-empty" hidden>Chưa có khóa học nào hoặc không khớp bộ lọc hiện tại.</div>
+        <div id="listMsg" class="muted" style="margin-top:12px;"></div>
+      </section>
+
+      <section class="card" style="margin-top:32px">
+        <h2>Tạo khóa học</h2>
+        <p class="muted">Chức năng tạo mới được gom về một trang duy nhất.</p>
+        <div class="row">
+          <a class="btn" href="/app/admin/teacher-new-course.html">Đi tới trang tạo khóa học</a>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

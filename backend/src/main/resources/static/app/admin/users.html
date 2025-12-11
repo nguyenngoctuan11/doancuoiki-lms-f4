@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quản lý người dùng</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .sticky-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 15;
+      background: radial-gradient(circle at top,#fff4e9,#ead7c5 70%);
+      border:1px solid rgba(217,189,166,0.7);
+      border-radius:24px;
+      padding:18px;
+      margin-bottom: 12px;
+      box-shadow:0 18px 40px rgba(103,67,36,0.15);
+      flex-wrap: wrap;
+      gap: 12px;
+      color:#2f190b;
+    }
+    .table-wrapper {
+      max-height: 70vh;
+      overflow: auto;
+    }
+    .table-wrapper table { min-width: 960px; }
+    .table-shell{
+      background:#fffdf8;
+      border-radius:22px;
+      border:1px solid rgba(223,200,178,0.6);
+      box-shadow:0 18px 40px rgba(77,47,28,0.08);
+      padding:16px;
+    }
+    .table-wrapper thead th {
+      position: sticky;
+      top: 0;
+      background: #201625;
+      color:#f5e7d7;
+      z-index: 10;
+    }
+    body.modal-open {
+      overflow: hidden;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 16px;
+      background: rgba(5,7,15,0.85);
+      backdrop-filter: blur(6px);
+      z-index: 200;
+    }
+    .modal.hidden {
+      display: none;
+    }
+    .modal-panel {
+      width: min(960px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      position: relative;
+    }
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, requireAuth, token} from '/app/app-common.js';
+
+    const el = (id) => document.getElementById(id);
+    const state = { editingId: null, roles: [], users: [] };
+
+    const refs = {
+      rows: () => el('userRows'),
+      listMsg: () => el('listMsg'),
+      empty: () => el('userEmpty'),
+      formTitle: () => el('formTitle'),
+      formMsg: () => el('formMsg'),
+      avatarPreview: () => el('avatarPreview'),
+      avatarPlaceholder: () => el('avatarPlaceholder'),
+      metaInfo: () => el('metaInfo')
+    };
+
+    const formatStatus = (status='')=>{
+      const value = status ? status.toLowerCase() : '';
+      const tone = value === 'active' ? 'ok' : '';
+      return `<span class="badge ${tone}">${status || '--'}</span>`;
+    };
+
+    const formatDate = (value)=>{
+      if(!value) return '--';
+      try{ return new Date(value).toLocaleString('vi-VN'); }catch{ return value; }
+    };
+
+    function renderTable(list){
+      if(!list.length){
+        refs.rows().innerHTML = '';
+        refs.empty().hidden = false;
+        return;
+      }
+      refs.empty().hidden = true;
+      refs.rows().innerHTML = list.map(user => `
+        <tr>
+          <td>${user.avatarUrl ? `<img class="avatar" src="${user.avatarUrl}" alt="${user.fullName||''}"/>`
+                                 : '<div class="avatar placeholder">--</div>'}</td>
+          <td>
+            <div>${user.fullName || '--'}</div>
+            <div class="muted">${user.email || ''}</div>
+          </td>
+          <td>${user.username || '--'}</td>
+          <td>${user.roles && user.roles.length ? user.roles.join(', ') : '--'}</td>
+          <td>${formatStatus(user.status)}</td>
+          <td>${user.twoFactorEnabled ? 'Bật' : 'Tắt'}</td>
+          <td>${formatDate(user.createdAt)}</td>
+          <td>
+            <div class="row">
+              <button class="btn ghost tiny edit-btn action-icon edit" data-id="${user.id}" aria-label="Chỉnh sửa">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 17.25V21h3.75L18.81 9.94l-3.75-3.75z"></path>
+                  <path d="M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0L15.13 5.12l3.75 3.75z"></path>
+                </svg>
+              </button>
+              <button class="btn danger tiny delete-btn action-icon danger" data-id="${user.id}" aria-label="Xóa">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 6H3"></path>
+                  <path d="M8 6V4h8v2"></path>
+                  <path d="M19 6l-1 14H6L5 6"></path>
+                  <path d="M10 11v6"></path>
+                  <path d="M14 11v6"></path>
+                </svg>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+      refs.rows().querySelectorAll('.edit-btn').forEach(btn => btn.onclick = ()=> openEditor(Number(btn.dataset.id)));
+      refs.rows().querySelectorAll('.delete-btn').forEach(btn => btn.onclick = ()=> removeUser(Number(btn.dataset.id)));
+    }
+
+    async function loadUsers(){
+      refs.listMsg().textContent = 'Đang tải danh sách...';
+      try{
+        const list = await api('/api/admin/users?limit=200');
+        state.users = list;
+        renderTable(list);
+        refs.listMsg().textContent = '';
+      }catch(err){
+        refs.listMsg().textContent = err.message || err;
+      }
+    }
+
+    async function loadRoles(){
+      try{
+        state.roles = await api('/api/admin/users/roles');
+        renderRoleOptions();
+      }catch(err){
+        state.roles = [];
+        el('roleOptions').innerHTML = `<div class="muted">${err.message || err}</div>`;
+      }
+    }
+
+    function renderRoleOptions(){
+      const host = el('roleOptions');
+      if(!host) return;
+      if(!state.roles.length){
+        host.innerHTML = '<div class="muted">Không có role nào</div>';
+        return;
+      }
+      host.innerHTML = state.roles.map(role => `
+        <label class="row option-row">
+          <input type="checkbox" value="${role.code}"/>
+          <span>${role.name || role.code}</span>
+        </label>
+      `).join('');
+    }
+
+    function setRoleSelections(selected){
+      const set = new Set((selected || []).map(r => (r || '').toLowerCase()));
+      document.querySelectorAll('#roleOptions input[type="checkbox"]').forEach(input => {
+        input.checked = set.has(input.value.toLowerCase());
+      });
+    }
+
+    function collectRoleSelections(){
+      return Array.from(document.querySelectorAll('#roleOptions input[type="checkbox"]:checked'))
+        .map(input => input.value);
+    }
+
+    function updateAvatarPreview(url){
+      if(url){
+        refs.avatarPreview().src = url;
+        refs.avatarPreview().hidden = false;
+        refs.avatarPlaceholder().style.display = 'none';
+      }else{
+        refs.avatarPreview().hidden = true;
+        refs.avatarPlaceholder().style.display = 'flex';
+      }
+    }
+
+    function resetForm(){
+      state.editingId = null;
+      refs.formTitle().textContent = 'Tạo người dùng';
+      refs.formMsg().textContent = '';
+      el('email').value = '';
+      el('fullName').value = '';
+      el('username').value = '';
+      el('password').value = '';
+      el('bio').value = '';
+      el('avatarUrl').value = '';
+      updateAvatarPreview('');
+      setRoleSelections(['student']);
+      refs.metaInfo().innerHTML = '';
+    }
+
+    function collectForm(){
+      return {
+        email: el('email').value.trim(),
+        fullName: el('fullName').value.trim(),
+        username: el('username').value.trim(),
+        password: el('password').value.trim(),
+        avatarUrl: el('avatarUrl').value.trim(),
+        bio: el('bio').value.trim(),
+        roles: collectRoleSelections()
+      };
+    }
+
+    async function uploadAvatar(){
+      const fileInput = el('avatarFile');
+      if(!fileInput.files.length){
+        refs.formMsg().textContent = 'Chọn ảnh trước khi tải lên.';
+        return;
+      }
+      refs.formMsg().textContent = 'Đang tải ảnh...';
+      try{
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        const headers = token()? { Authorization:`Bearer ${token()}` } : {};
+        const res = await fetch('/api/upload/image', { method:'POST', headers, body: fd });
+        const text = await res.text();
+        let data; try{ data = text ? JSON.parse(text) : null; }catch{ data = null; }
+        if(!res.ok) throw new Error((data && data.message) || res.statusText);
+        el('avatarUrl').value = data.url || '';
+        updateAvatarPreview(data.url || '');
+        refs.formMsg().textContent = 'Đã cập nhật avatar.';
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    function openUserModal(){
+      const modal = el('userModal');
+      if(!modal) return;
+      modal.classList.remove('hidden');
+      document.body.classList.add('modal-open');
+    }
+
+    function closeUserModal(){
+      const modal = el('userModal');
+      if(!modal) return;
+      modal.classList.add('hidden');
+      document.body.classList.remove('modal-open');
+    }
+
+    async function openEditor(id){
+      openUserModal();
+      refs.formMsg().textContent = 'Đang tải người dùng...';
+      try{
+        const user = await api(`/api/admin/users/${id}`);
+        state.editingId = id;
+        refs.formTitle().textContent = `Chỉnh sửa: ${user.fullName || user.email}`;
+        el('email').value = user.email || '';
+        el('fullName').value = user.fullName || '';
+        el('username').value = user.username || '';
+        el('password').value = '';
+        el('bio').value = user.bio || '';
+        el('avatarUrl').value = user.avatarUrl || '';
+        updateAvatarPreview(user.avatarUrl);
+        setRoleSelections(user.roles || []);
+        refs.metaInfo().innerHTML = `
+          <small class="muted">Tạo lúc: ${formatDate(user.createdAt)} | Cập nhật: ${formatDate(user.updatedAt)}</small>
+        `;
+        refs.formMsg().textContent = '';
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    async function saveUser(){
+      const payload = collectForm();
+      refs.formMsg().textContent = state.editingId ? 'Đang cập nhật...' : 'Đang tạo...';
+      try{
+        const method = state.editingId ? 'PUT' : 'POST';
+        const url = state.editingId ? `/api/admin/users/${state.editingId}` : '/api/admin/users';
+        if(!state.editingId && !payload.password){
+          throw new Error('Mật khẩu bắt buộc khi tạo mới');
+        }
+        await api(url, { method, body: JSON.stringify(payload) });
+        refs.formMsg().textContent = state.editingId ? 'Đã cập nhật người dùng.' : 'Đã tạo người dùng.';
+        resetForm();
+        closeUserModal();
+        loadUsers();
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    async function removeUser(id){
+      if(!confirm(`Xóa người dùng #${id}?`)) return;
+      try{
+        await api(`/api/admin/users/${id}`, { method:'DELETE' });
+        if(state.editingId === id) resetForm();
+        loadUsers();
+      }catch(err){
+        alert(err.message || err);
+      }
+    }
+
+    function bindFormEvents(){
+      const newBtn = el('newUserBtn');
+      if(newBtn){
+        newBtn.addEventListener('click', ()=>{
+          resetForm();
+          openUserModal();
+        });
+      }
+      el('saveUserBtn').addEventListener('click', saveUser);
+      el('avatarUploadBtn').addEventListener('click', uploadAvatar);
+      const closeBtn = el('closeUserModal');
+      if(closeBtn) closeBtn.addEventListener('click', closeUserModal);
+      const modal = el('userModal');
+      if(modal){
+        modal.addEventListener('click', (event)=>{
+          if(event.target === modal) closeUserModal();
+        });
+      }
+      window.addEventListener('keydown', (event)=>{
+        if(event.key === 'Escape') closeUserModal();
+      });
+    }
+
+    window.addEventListener('DOMContentLoaded', async ()=>{
+      mountNav('nav');
+      const content = document.getElementById('adminContent');
+      const locked = document.getElementById('noAccess');
+      if(!requireAuth(['MANAGER'])){
+        locked.hidden = false;
+        content.style.display = 'none';
+        return;
+      }
+      locked.hidden = true;
+      content.style.display = 'flex';
+      mountAdminMenu('adminMenu','admin-users');
+      mountAdminUser('adminUserCard');
+      bindFormEvents();
+      await loadRoles();
+      resetForm();
+      loadUsers();
+    });
+  </script>
+</head>
+<body>
+  <div id="nav"></div>
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Admin</span>
+        <strong>Bảng điều khiển</strong>
+      </div>
+      <div id="adminMenu" class="admin-menu"></div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+    </aside>
+    <main class="admin-main" id="adminContent" style="display:none">
+      <div class="admin-page-header">
+        <span class="eyebrow">Manager</span>
+        <h1>Quản lý người dùng</h1>
+        <p>Danh sách người dùng và biểu mẫu tạo/sửa.</p>
+      </div>
+
+      <section class="card">
+        <div class="section-heading sticky-toolbar">
+          <div>
+            <h2>Danh sách người dùng</h2>
+            <p class="muted">Bao gồm đầy đủ thuộc tính.</p>
+          </div>
+          <button class="btn ghost" id="newUserBtn">Tạo mới</button>
+        </div>
+        <div class="table-wrapper table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Avatar</th>
+                <th>Họ tên / Email</th>
+                <th>Username</th>
+                <th>Roles</th>
+                <th>Trạng thái</th>
+                <th>2FA</th>
+                <th>Tạo lúc</th>
+                <th>Hành động</th>
+              </tr>
+            </thead>
+            <tbody id="userRows"></tbody>
+          </table>
+        </div>
+        <div id="userEmpty" class="table-empty" hidden>Chưa có người dùng nào.</div>
+        <div id="listMsg" class="muted" style="margin-top:12px;"></div>
+      </section>
+
+      <div id="userModal" class="modal hidden">
+        <div class="modal-panel card">
+          <button class="btn ghost tiny modal-close" id="closeUserModal">&times;</button>
+          <div class="section-heading" style="margin-top:8px">
+            <div>
+              <h2 id="formTitle">Tao nguoi dung</h2>
+              <p class="muted">Form chinh sua giong form tao.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Email</span><input id="email" placeholder="email@example.com"/></label>
+            <label class="field"><span>Ho ten</span><input id="fullName" placeholder="Ten day du"/></label>
+            <label class="field"><span>Username</span><input id="username" placeholder="username"/></label>
+            <label class="field"><span>Mat khau</span><input id="password" type="password" placeholder="It nhat 6 ky tu"/></label>
+            <label class="field" style="grid-column:span 2;">
+              <span>Gioi thieu</span>
+              <textarea id="bio" placeholder="Mo ta ngan ve nguoi dung"></textarea>
+            </label>
+            <div class="field" style="min-width:240px">
+              <span>Anh dai dien</span>
+              <div class="thumb-box">
+                <img id="avatarPreview" class="avatar" hidden alt="Avatar"/>
+                <div id="avatarPlaceholder" class="avatar placeholder">Chua chon anh</div>
+              </div>
+              <div class="row" style="margin-top:8px">
+                <input type="file" id="avatarFile" accept="image/*"/>
+                <button class="btn ghost tiny" type="button" id="avatarUploadBtn">Tai anh</button>
+              </div>
+              <input type="hidden" id="avatarUrl"/>
+            </div>
+            <div class="field" style="grid-column:span 2">
+              <span>Roles</span>
+              <div id="roleOptions" class="role-list"></div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn" id="saveUserBtn">Luu</button>
+            <div id="formMsg" class="muted"></div>
+          </div>
+          <div id="metaInfo" style="margin-top:8px;"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+  <div id="noAccess" class="card" hidden style="max-width:640px;margin:32px auto;text-align:center">
+    <h2>Cần quyền quản trị</h2>
+    <p class="muted">Đăng nhập bằng tài khoản có role <strong>MANAGER</strong> để truy cập trang này.</p>
+    <a class="btn" href="/app/auth/login.html">Đăng nhập</a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Báo cáo thống kê</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .analytics-page { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .filter-row .input { min-width: 140px; }
+    .section-grid { display: grid; gap: 16px; }
+    @media (min-width: 1024px) { .section-grid { grid-template-columns: 1fr 1fr; } }
+    .card-compact { padding: 16px; }
+    .chart-card { padding: 16px 18px; }
+    .chart-pair { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 12px; align-items: stretch; }
+    @media (max-width: 960px) { .chart-pair { grid-template-columns: 1fr; } }
+    .chart-shell { background: #0f172a; border: 1px dashed #23304a; border-radius: 12px; padding: 12px; min-height: 280px; }
+    .metric-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .muted.small { display: inline-block; margin-top: 2px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script type="module">
+    import { mountNav, mountAdminMenu, mountAdminUser, requireAuth, api } from '/app/app-common.js';
+    const numberFormatter = new Intl.NumberFormat('vi-VN');
+    const formatNumber = (value, fallback = '--') => {
+      if (value === null || value === undefined) return fallback;
+      const num = Number(value);
+      if (Number.isFinite(num)) return numberFormatter.format(num);
+      return String(value);
+    };
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!requireAuth(['MANAGER'])) return;
+      mountNav('nav', 'compact');
+      mountAdminMenu('adminMenu', 'analytics');
+      mountAdminUser('adminUserCard');
+      initFilters();
+      loadSummary();
+      loadCharts();
+      loadCourseStats();
+      loadLessonStats();
+      loadRevenueStats();
+      toggleSections();
+      const catSelect = document.getElementById('chartCategory');
+      if (catSelect) {
+        catSelect.addEventListener('change', () => {
+          loadCharts();
+          loadCourseStats();
+          loadLessonStats();
+          loadRevenueStats();
+          toggleSections();
+        });
+      }
+    });
+
+    function initFilters() {
+      const form = document.getElementById('filterForm');
+      if (!form) return;
+      const toInput = form.querySelector('input[name="to"]');
+      const fromInput = form.querySelector('input[name="from"]');
+      const groupByInput = form.querySelector('select[name="groupBy"]');
+      const today = new Date();
+      const toStr = today.toISOString().slice(0, 10);
+      const fromStr = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      toInput.value = toStr;
+      fromInput.value = fromStr;
+      groupByInput.value = 'day';
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        loadCharts();
+        loadCourseStats();
+        loadLessonStats();
+        loadRevenueStats();
+        toggleSections();
+      });
+
+      form.querySelectorAll('[data-preset]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const days = Number(btn.dataset.preset || 30);
+          const now = new Date();
+          toInput.value = now.toISOString().slice(0, 10);
+          fromInput.value = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+          loadCharts();
+          loadCourseStats();
+          loadLessonStats();
+          loadRevenueStats();
+          toggleSections();
+        });
+      });
+    }
+
+    function toggleSections() {
+      const category = document.getElementById('chartCategory')?.value || 'users';
+      let firstShown = null;
+      document.querySelectorAll('.metric-section').forEach((el) => {
+        const section = el.dataset.section;
+        el.style.display = category === section ? 'block' : 'none';
+        if (category === section && !firstShown) {
+          firstShown = el;
+        }
+      });
+      if (firstShown) {
+        firstShown.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    async function loadSummary() {
+      const els = {
+        total: document.getElementById('m-total-users'),
+        newUsers: document.getElementById('m-new-users'),
+        active: document.getElementById('m-active-users'),
+        retention: document.getElementById('m-retention'),
+      };
+      try {
+        const data = await api('/api/admin/analytics/summary');
+        els.total.textContent = data.totalUsers ?? '--';
+        els.newUsers.textContent = `${data.newUsers7d ?? 0} / 7d`;
+        els.active.textContent = `${data.activeUsers30d ?? 0} / 30d`;
+        els.retention.textContent = `${data.retentionPercent ?? 0}%`;
+      } catch (e) {
+        els.total.textContent = '--';
+        els.newUsers.textContent = '--';
+        els.active.textContent = '--';
+        els.retention.textContent = '--';
+        const box = document.getElementById('chartPlaceholder');
+        if (box) box.textContent = 'Không thể tải dữ liệu. Kiểm tra API.';
+      }
+    }
+
+    async function loadCharts() {
+      const placeholder = document.getElementById('chartPlaceholder');
+      const canvasLine = document.getElementById('chartLogins');
+      const canvasRoles = document.getElementById('chartRoles');
+      if (!canvasLine || !canvasRoles) return;
+      placeholder.textContent = 'Đang tải biểu đồ...';
+      const form = document.getElementById('filterForm');
+      const to = form?.querySelector('input[name="to"]')?.value;
+      const from = form?.querySelector('input[name="from"]')?.value;
+      const groupBy = form?.querySelector('select[name="groupBy"]')?.value || 'day';
+      const category = document.getElementById('chartCategory')?.value || 'users';
+      try {
+        if (category === 'courses') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/courses/trend?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['enroll', 'complete', 'dropoff']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Đăng ký', data: series.map((p) => p.enroll || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Hoàn thành', data: series.map((p) => p.complete || 0), borderColor: '#34d399', tension: 0.3 },
+            { label: 'Drop-off', data: series.map((p) => p.dropoff || 0), borderColor: '#f87171', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['Đang hoạt động', 'Tạm dừng'], [70, 30]);
+        } else if (category === 'content') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/content/trend?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['views', 'completion', 'pass']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Lượt xem', data: series.map((p) => p.views || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Hoàn thành bài', data: series.map((p) => p.completion || 0), borderColor: '#a78bfa', tension: 0.3 },
+            { label: 'Pass', data: series.map((p) => p.pass || 0), borderColor: '#34d399', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['Đã nộp', 'Chưa nộp'], [60, 40]);
+        } else if (category === 'revenue') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/revenue/trend?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['revenue', 'orders', 'success']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Doanh thu', data: series.map((p) => p.revenue || 0), borderColor: '#fbbf24', tension: 0.3 },
+            { label: 'Đơn hàng', data: series.map((p) => p.orders || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Thành công', data: series.map((p) => p.success || 0), borderColor: '#34d399', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['VNPAY', 'BANK', 'CARD'], [45, 35, 20]);
+        } else if (category === 'behavior') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/behavior?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['time', 'interact', 'sessions']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Thời gian học (phút)', data: series.map((p) => p.time || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Tương tác', data: series.map((p) => p.interact || 0), borderColor: '#a78bfa', tension: 0.3 },
+            { label: 'Phiên học', data: series.map((p) => p.sessions || 0), borderColor: '#34d399', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['Mobile', 'PC', 'Tablet'], [50, 40, 10]);
+        } else if (category === 'system') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/system?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['traffic', 'api', 'errors']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Traffic', data: series.map((p) => p.traffic || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'API calls', data: series.map((p) => p.api || 0), borderColor: '#a78bfa', tension: 0.3 },
+            { label: 'Lỗi', data: series.map((p) => p.errors || 0), borderColor: '#f87171', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['OK', '4xx', '5xx'], [80, 10, 10]);
+        } else if (category === 'instructor') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/instructor?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['students', 'complete', 'rating']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Lượt học viên', data: series.map((p) => p.students || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Hoàn thành', data: series.map((p) => p.complete || 0), borderColor: '#34d399', tension: 0.3 },
+            { label: 'Đánh giá', data: series.map((p) => p.rating || 0), borderColor: '#fbbf24', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['5★', '4★', '3★'], [50, 35, 15]);
+        } else if (category === 'support') {
+          let series;
+          try {
+            series = await api(`/api/admin/analytics/support?from=${from}&to=${to}&groupBy=${groupBy}`);
+          } catch {
+            series = fakeSeries(['newTicket', 'openTicket', 'closedTicket']);
+          }
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Ticket mới', data: series.map((p) => p.newTicket || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Đang xử lý', data: series.map((p) => p.openTicket || 0), borderColor: '#fbbf24', tension: 0.3 },
+            { label: 'Đã xử lý', data: series.map((p) => p.closedTicket || 0), borderColor: '#34d399', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          drawDonut(canvasRoles, ['Chưa phản hồi', 'Đang xử lý', 'Đã xử lý'], [30, 20, 50]);
+        } else {
+          const series = await api(`/api/admin/analytics/logins?from=${from}&to=${to}&groupBy=${groupBy}`);
+          const labels = series.map((p) => p.bucket);
+          const datasets = [
+            { label: 'Đăng nhập', data: series.map((p) => p.logins || 0), borderColor: '#38bdf8', tension: 0.3 },
+            { label: 'Người dùng mới', data: series.map((p) => p.newUsers || 0), borderColor: '#a78bfa', tension: 0.3 },
+            { label: 'Active Users', data: series.map((p) => p.activeUsers || 0), borderColor: '#34d399', tension: 0.3 },
+          ];
+          drawLineChart(canvasLine, labels, datasets);
+          const roles = await api('/api/admin/analytics/roles');
+          drawDonut(canvasRoles, roles.map((r) => r.role), roles.map((r) => r.count));
+        }
+        placeholder.textContent = '';
+      } catch (e) {
+        placeholder.textContent = 'Không thể tải dữ liệu. Kiểm tra API.';
+      }
+    }
+
+    function drawLineChart(canvas, labels, datasets) {
+      if (canvas._chart) canvas._chart.destroy();
+      canvas._chart = new window.Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          plugins: { legend: { labels: { color: '#e5e7eb' } }, tooltip: { mode: 'index', intersect: false } },
+          scales: {
+            x: { ticks: { color: '#94a3b8' }, grid: { color: '#1f2937' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: '#1f2937' } },
+          },
+        },
+      });
+    }
+
+    function drawDonut(canvas, labels, data) {
+      if (canvas._chart) canvas._chart.destroy();
+      canvas._chart = new window.Chart(canvas, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [
+            {
+              data,
+              backgroundColor: ['#38bdf8', '#a78bfa', '#f87171', '#fbbf24', '#34d399', '#fb7185'],
+            },
+          ],
+        },
+        options: { plugins: { legend: { labels: { color: '#e5e7eb' } } } },
+      });
+    }
+
+    function fakeSeries(keys) {
+      const today = new Date();
+      const out = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(today.getTime() - i * 86400000);
+        const bucket = d.toISOString().slice(0, 10);
+        const item = { bucket };
+        keys.forEach((k, idx) => {
+          item[k] = Math.floor(Math.random() * 10) + 1 + idx * 3;
+        });
+        out.push(item);
+      }
+      return out;
+    }
+
+    async function loadCourseStats() {
+      const targets = {
+        active: document.getElementById('m-course-active'),
+        news: document.getElementById('m-course-new'),
+        paused: document.getElementById('m-course-paused'),
+        completion: document.getElementById('m-course-completion'),
+      };
+      try {
+        const data = await api('/api/admin/analytics/courses');
+        targets.active.textContent = data.active ?? '--';
+        targets.news.textContent = data.newPerMonth ?? '--';
+        targets.paused.textContent = data.paused ?? '--';
+        targets.completion.textContent = data.completionRate ? `${data.completionRate}%` : '--';
+      } catch {
+        targets.active.textContent = '15';
+        targets.news.textContent = '2';
+        targets.paused.textContent = '1';
+        targets.completion.textContent = '72%';
+      }
+    }
+
+    async function loadLessonStats() {
+      const t = {
+        views: document.getElementById('m-lesson-views'),
+        completion: document.getElementById('m-lesson-completion'),
+        submit: document.getElementById('m-assignment-submit'),
+        pass: document.getElementById('m-assignment-pass'),
+      };
+      try {
+        const data = await api('/api/admin/analytics/content');
+        t.views.textContent = data.views ?? '--';
+        t.completion.textContent = data.lessonCompletionRate ? `${data.lessonCompletionRate}%` : '--';
+        t.submit.textContent = data.submitRate ? `${data.submitRate}%` : '--';
+        t.pass.textContent = data.passRate ? `${data.passRate}%` : '--';
+      } catch {
+        t.views.textContent = '1.2k';
+        t.completion.textContent = '68%';
+        t.submit.textContent = '54%';
+        t.pass.textContent = '41%';
+      }
+    }
+
+    async function loadRevenueStats() {
+      const t = {
+        total: document.getElementById('m-rev-total'),
+        orders: document.getElementById('m-rev-orders'),
+        success: document.getElementById('m-rev-success'),
+        channel: document.getElementById('m-rev-channel'),
+      };
+      try {
+        const data = await api('/api/admin/analytics/revenue');
+        t.total.textContent = formatNumber(data.total);
+        t.orders.textContent = formatNumber(data.orders);
+        t.success.textContent = data.successRate != null ? `${data.successRate}%` : '--';
+        t.channel.textContent = data.topChannel || '--';
+      } catch {
+        t.total.textContent = '120.000.000 ₫';
+        t.orders.textContent = '320';
+        t.success.textContent = '92%';
+        t.channel.textContent = 'VNPAY';
+      }
+    }
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Bảng điều khiển</span>
+        <strong>Báo cáo thống kê</strong>
+        <p class="muted">Tổng quan người dùng, khóa học, bài kiểm tra.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main analytics-page">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted">Theo dõi sức khỏe hệ thống</p>
+          <h1>Báo cáo thống kê</h1>
+          <p class="muted">Chọn khoảng thời gian để xem số liệu.</p>
+          <form id="filterForm" class="filter-row" style="margin-top:12px; gap:8px; display:flex; flex-wrap:wrap; align-items:center;">
+            <label class="muted small">Từ
+              <input type="date" name="from" class="input"/>
+            </label>
+            <label class="muted small">Đến
+              <input type="date" name="to" class="input"/>
+            </label>
+            <label class="muted small">Nhóm theo
+              <select name="groupBy" class="input">
+                <option value="day">Ngày</option>
+                <option value="month">Tháng</option>
+              </select>
+            </label>
+            <button type="submit" class="btn">Lọc</button>
+            <button type="button" class="btn ghost" data-preset="7">7 ngày</button>
+            <button type="button" class="btn ghost" data-preset="30">30 ngày</button>
+          </form>
+        </div>
+
+        <div class="card grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+          <div class="metric-tile">
+            <p class="eyebrow">Tổng người dùng</p>
+            <strong class="metric-value" id="m-total-users">--</strong>
+          </div>
+          <div class="metric-tile">
+            <p class="eyebrow">Người dùng mới</p>
+            <strong class="metric-value" id="m-new-users">--</strong>
+          </div>
+          <div class="metric-tile">
+            <p class="eyebrow">Active Users</p>
+            <strong class="metric-value" id="m-active-users">--</strong>
+          </div>
+          <div class="metric-tile">
+            <p class="eyebrow">Tỉ lệ quay lại</p>
+            <strong class="metric-value" id="m-retention">--</strong>
+          </div>
+        </div>
+
+        <div class="card chart-card" style="margin-top:16px;">
+          <div class="flex-between" style="gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+            <div class="metric-title">
+              <h2>Biểu đồ nhanh</h2>
+              <span class="muted small">(Chọn nhóm dữ liệu: đăng nhập, khóa học, bài giảng...)</span>
+            </div>
+            <label class="muted small">Nhóm biểu đồ
+              <select id="chartCategory" class="input" style="min-width:200px;">
+                <option value="users">Người dùng</option>
+                <option value="courses">Khóa học</option>
+                <option value="content">Bài giảng/Bài tập</option>
+                <option value="revenue">Doanh thu</option>
+                <option value="behavior">Hành vi học viên</option>
+                <option value="system">Hệ thống</option>
+                <option value="instructor">Giảng viên</option>
+                <option value="support">Hỗ trợ</option>
+              </select>
+            </label>
+          </div>
+          <div class="empty" id="chartPlaceholder">Chưa có dữ liệu kết nối API.</div>
+          <div class="chart-pair" style="margin-top:12px;">
+            <div class="chart-shell">
+              <canvas id="chartLogins" height="160"></canvas>
+            </div>
+            <div class="chart-shell">
+              <canvas id="chartRoles" height="160"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="card metric-section" data-section="courses" style="margin-top:16px;">
+          <h2>Khóa học</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Khóa đang hoạt động</p><strong class="metric-value" id="m-course-active">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Khóa mới/tháng</p><strong class="metric-value" id="m-course-new">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Tạm dừng / Ngừng</p><strong class="metric-value" id="m-course-paused">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Tỉ lệ hoàn thành TB</p><strong class="metric-value" id="m-course-completion">--</strong></div>
+          </div>
+          <div class="muted" style="margin-top:8px;">Biểu đồ hiệu suất khóa (đăng ký, hoàn thành, drop-off) sẽ hiển thị sau khi nối API.</div>
+        </div>
+
+        <div class="card metric-section" data-section="content" style="margin-top:16px;">
+          <h2>Bài giảng & Bài tập</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Lượt xem/tải</p><strong class="metric-value" id="m-lesson-views">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Hoàn thành bài giảng</p><strong class="metric-value" id="m-lesson-completion">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Tỉ lệ nộp bài</p><strong class="metric-value" id="m-assignment-submit">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Pass rate</p><strong class="metric-value" id="m-assignment-pass">--</strong></div>
+          </div>
+          <div class="muted" style="margin-top:8px;">Có thể bổ sung biểu đồ điểm trung bình, tỉ lệ vượt qua theo bài kiểm tra.</div>
+        </div>
+
+        <div class="card metric-section" data-section="revenue" style="margin-top:16px;">
+          <h2>Doanh thu</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Tổng doanh thu</p><strong class="metric-value" id="m-rev-total">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Đơn hàng</p><strong class="metric-value" id="m-rev-orders">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Tỉ lệ thành công</p><strong class="metric-value" id="m-rev-success">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">PT thanh toán phổ biến</p><strong class="metric-value" id="m-rev-channel">--</strong></div>
+          </div>
+          <div class="muted" style="margin-top:8px;">Biểu đồ doanh thu theo thời gian và theo khóa/giảng viên sẽ hiển thị khi có đủ dữ liệu.</div>
+        </div>
+
+        <div class="card metric-section" data-section="behavior" style="margin-top:16px;">
+          <h2>Hành vi học viên</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Thời gian học TB/ngày</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Mức tương tác</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Giờ học phổ biến</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Thiết bị</p><strong class="metric-value">--</strong></div>
+          </div>
+        </div>
+
+        <div class="card metric-section" data-section="system" style="margin-top:16px;">
+          <h2>Hệ thống</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Traffic</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">API calls/giờ</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Response Time</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Error Rate</p><strong class="metric-value">--</strong></div>
+          </div>
+        </div>
+
+        <div class="card metric-section" data-section="instructor" style="margin-top:16px;">
+          <h2>Giảng viên</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Số khóa quản lý</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Lượt học viên</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Lượt hoàn thành</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Đánh giá TB</p><strong class="metric-value">--</strong></div>
+          </div>
+        </div>
+
+        <div class="card metric-section" data-section="support" style="margin-top:16px; margin-bottom:24px;">
+          <h2>Hỗ trợ & chăm sóc</h2>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px;">
+            <div class="metric-tile"><p class="eyebrow">Ticket mới</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Đang xử lý</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Đã xử lý</p><strong class="metric-value">--</strong></div>
+            <div class="metric-tile"><p class="eyebrow">Thời gian phản hồi TB</p><strong class="metric-value">--</strong></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

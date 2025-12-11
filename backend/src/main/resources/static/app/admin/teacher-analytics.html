@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Thống kê giảng viên</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import { mountNav, mountAdminMenu, mountAdminUser, api } from '/app/app-common.js';
+
+    const FALLBACK_COLORS = ['#a855f7', '#10b981', '#f97316'];
+    const state = { days: 30 };
+
+    function showLoading(active) {
+      const box = document.getElementById('dashboardLoading');
+      if (!box) return;
+      box.style.display = active ? 'flex' : 'none';
+    }
+
+    function showError(message) {
+      const el = document.getElementById('dashboardError');
+      if (!el) return;
+      el.textContent = message || '';
+      el.style.display = message ? 'block' : 'none';
+    }
+
+    async function loadDashboard() {
+      showLoading(true);
+      showError('');
+      try {
+        const data = await api(`/api/teacher/analytics/dashboard?days=${state.days}`);
+        renderDashboard(data || {});
+      } catch (err) {
+        console.error(err);
+        showError(err?.message || 'Không tải được thống kê. Vui lòng thử lại.');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function renderSummary(data) {
+      const host = document.getElementById('summaryGrid');
+      const items = Array.isArray(data.summary) && data.summary.length ? data.summary : [];
+      if (!items.length) {
+        host.innerHTML = '<div class="empty">Chưa có dữ liệu thống kê.</div>';
+        return;
+      }
+      host.innerHTML = items
+        .map(
+          (item) => `
+          <article class="stat-card">
+            <p class="muted tiny">${item.label}</p>
+            <p class="stat-value">${item.value}</p>
+            <p class="muted tiny">${item.diff || ''}</p>
+          </article>`,
+        )
+        .join('');
+    }
+
+    function renderCourses(data) {
+      const host = document.getElementById('courseTable');
+      const courses = Array.isArray(data.courses) ? data.courses : [];
+      if (!courses.length) {
+        host.innerHTML = '<div class="empty">Bạn chưa có khóa học nào để thống kê.</div>';
+        return;
+      }
+      host.innerHTML = courses
+        .map(
+          (c) => `
+          <article class="course-card">
+            <div class="course-head">
+              <h4>${c.title}</h4>
+              <span class="rating">${(c.rating ?? 0).toFixed(1)}★</span>
+            </div>
+            <div class="course-meta">
+              <div>
+                <p class="muted tiny">Học viên</p>
+                <p class="course-value">${c.enrolled ?? 0}</p>
+              </div>
+              <div>
+                <p class="muted tiny">Hoàn thành</p>
+                <p class="course-value">${c.completion ?? 0}%</p>
+              </div>
+              <div>
+                <p class="muted tiny">Bỏ dở</p>
+                <p class="course-value drop">${c.drop ?? 0}</p>
+              </div>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar" style="width:${Math.min(100, c.completion ?? 0)}%;"></div>
+            </div>
+          </article>`,
+        )
+        .join('');
+    }
+
+    function renderInteractions(data) {
+      const notes = data.interactions?.notes || {};
+      const resources = data.interactions?.resources || {};
+      const support = data.interactions?.support || {};
+
+      document.getElementById('notePending').textContent = notes.pending ?? 0;
+      document.getElementById('noteAwait').textContent = notes.awaiting ?? 0;
+      document.getElementById('noteResolved').textContent = notes.resolved ?? 0;
+      document.getElementById('resourcePending').textContent = resources.pending ?? 0;
+      document.getElementById('resourceApproved').textContent = resources.approved ?? 0;
+      document.getElementById('supportOpen').textContent = support.open ?? 0;
+      document.getElementById('supportSla').textContent = support.avgResponse || 'Chưa có dữ liệu';
+
+      const host = document.getElementById('noteList');
+      const list = Array.isArray(data.interactions?.latestNotes) ? data.interactions.latestNotes : [];
+      host.innerHTML = list.length
+        ? list
+            .map(
+              (note) => `
+          <li>
+            <div>
+              <p class="note-course">${note.course || ''}</p>
+              <p class="muted tiny">${note.student || ''} · ${note.at || ''}</p>
+            </div>
+            <p class="muted">${note.content || ''}</p>
+          </li>`,
+            )
+            .join('')
+        : '<li class="muted tiny">Chưa có ghi chú mới.</li>';
+    }
+
+    function renderReviews(data) {
+      const host = document.getElementById('reviewList');
+      const reviews = Array.isArray(data.reviews) ? data.reviews : [];
+      if (!reviews.length) {
+        host.innerHTML = '<div class="empty">Chưa có đánh giá nào được duyệt.</div>';
+        return;
+      }
+      host.innerHTML = reviews
+        .map(
+          (item) => `
+          <article class="review-card">
+            <div>
+              <p class="review-title">${item.course}</p>
+              <p class="muted tiny">${item.newReviews ?? 0} đánh giá mới</p>
+            </div>
+            <div class="review-metrics">
+              <div>
+                <span class="review-value">${(item.avg ?? 0).toFixed(1)}★</span>
+                <span class="muted tiny">Điểm TB</span>
+              </div>
+              <div>
+                <span class="review-value">${item.recommend ?? 0}%</span>
+                <span class="muted tiny">Khuyến nghị</span>
+              </div>
+            </div>
+          </article>`,
+        )
+        .join('');
+    }
+
+    function drawSparkline(canvas, values, color) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      const safeValues = Array.isArray(values) && values.length ? values : [0];
+      const max = Math.max(...safeValues);
+      const min = Math.min(...safeValues);
+      const diff = max === min ? 1 : max - min;
+      ctx.strokeStyle = color || '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      safeValues.forEach((val, idx) => {
+        const x = safeValues.length === 1 ? w : (idx / (safeValues.length - 1)) * w;
+        const y = h - ((val - min) / diff) * h;
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function renderTrends(data) {
+      const host = document.getElementById('trendGrid');
+      const trends = Array.isArray(data.trends) ? data.trends : [];
+      if (!trends.length) {
+        host.innerHTML = '<div class="empty">Chưa có dữ liệu hành vi trong khoảng thời gian này.</div>';
+        return;
+      }
+      host.innerHTML = trends
+        .map(
+          (t, idx) => `
+          <article class="trend-card">
+            <div class="trend-head">
+              <p class="muted tiny">${t.label}</p>
+              <span class="trend-value">${(t.values && t.values.length ? t.values[t.values.length - 1] : 0)}</span>
+            </div>
+            <canvas id="${t.id}" width="260" height="80"></canvas>
+          </article>`,
+        )
+        .join('');
+      trends.forEach((t, idx) => {
+        drawSparkline(
+          document.getElementById(t.id),
+          t.values,
+          t.color || FALLBACK_COLORS[idx % FALLBACK_COLORS.length],
+        );
+      });
+    }
+
+    function renderHero(data) {
+      const el = document.getElementById('heroGreeting');
+      if (el) {
+        el.textContent = `Xin chào, ${data.name || 'giảng viên'}!`;
+      }
+      document.getElementById('summaryHeroPending').textContent = data.hero?.pending ?? 0;
+      document.getElementById('summaryHeroApproved').textContent = data.hero?.resolved ?? 0;
+    }
+
+    function renderDashboard(data) {
+      renderHero(data);
+      renderSummary(data);
+      renderCourses(data);
+      renderInteractions(data);
+      renderReviews(data);
+      renderTrends(data);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      mountNav('nav', 'compact');
+      mountAdminMenu('adminMenu', 'teacher-analytics');
+      mountAdminUser('adminUserCard');
+      loadDashboard();
+    });
+  </script>
+  <style>
+    .hero-card { position:relative; overflow:hidden; border-radius:28px; padding:32px; background:linear-gradient(135deg, rgba(94,96,255,0.12), rgba(64,18,136,0.55)); border:1px solid rgba(148,163,184,0.25); box-shadow:0 25px 60px rgba(8,11,22,0.55); display:grid; gap:24px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); color:#f8fafc; }
+    .hero-card::after { content:''; position:absolute; inset:0; background:radial-gradient(circle at 15% 20%, rgba(255,255,255,0.08), transparent 45%); pointer-events:none; }
+    .hero-card > * { position:relative; }
+    .hero-eyebrow { text-transform:uppercase; font-size:0.75rem; letter-spacing:0.3em; color:#c7d2fe; margin-bottom:10px; display:block; }
+    .hero-title { font-size: clamp(1.8rem, 3vw, 2.6rem); color:#fff; margin-bottom:6px; }
+    .hero-text { color:#e0e7ff; max-width:55ch; margin-bottom:16px; }
+    .hero-tags { display:flex; flex-wrap:wrap; gap:10px; }
+    .hero-tags span { background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.32); color:#f8fafc; padding:6px 12px; border-radius:999px; font-size:0.85rem; }
+    .hero-side { background:rgba(15,23,42,0.45); border:1px solid rgba(148,163,184,0.2); border-radius:22px; padding:20px; }
+    .hero-checklist { list-style:none; padding:0; margin:12px 0 0; display:flex; flex-direction:column; gap:8px; color:#e2e8f0; }
+    .hero-checklist li { font-size:0.9rem; padding-left:18px; position:relative; }
+    .hero-checklist li::before { content:'•'; position:absolute; left:0; color:#a5b4fc; }
+    .hero-progress { margin-top:18px; display:flex; gap:20px; align-items:flex-end; flex-wrap:wrap; }
+    .hero-number { font-size:2rem; font-weight:600; color:#fff; display:block; }
+    .hero-note { color:#c7d2fe; margin:4px 0 0; font-size:0.85rem; }
+
+    .summary-grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+    .stat-card { border-radius:22px; padding:18px; background:rgba(15,23,42,0.85); border:1px solid rgba(148,163,184,0.2); color:#e2e8f0; box-shadow:0 20px 45px rgba(15,23,42,0.35); }
+    .stat-value { font-size:1.8rem; font-weight:600; color:#fefefe; margin-top:4px; }
+
+    .course-grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+    .course-card { border:1px solid rgba(148,163,184,0.25); border-radius:22px; padding:18px; background:#fff; box-shadow:0 12px 35px rgba(15,23,42,0.15); display:flex; flex-direction:column; gap:12px; }
+    .course-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .course-head h4 { font-size:1rem; color:#0f172a; margin:0; }
+    .rating { background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:999px; font-weight:600; font-size:0.85rem; }
+    .course-meta { display:flex; gap:16px; justify-content:space-between; }
+    .course-value { font-size:1.2rem; font-weight:600; color:#0f172a; }
+    .course-value.drop { color:#dc2626; }
+    .progress-track { background:rgba(14,165,233,0.12); border-radius:999px; height:8px; }
+    .progress-bar { background:linear-gradient(90deg,#6366f1,#22d3ee); height:100%; border-radius:999px; }
+
+    .interaction-grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); margin-top:16px; }
+    .interaction-card { border-radius:20px; border:1px solid rgba(148,163,184,0.25); background:rgba(15,23,42,0.04); padding:16px; }
+    .interaction-card strong { display:block; font-size:1.4rem; }
+    .interaction-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:12px; }
+    .interaction-list li { border-radius:16px; border:1px solid rgba(148,163,184,0.35); padding:12px; background:#fff; }
+    .note-course { font-weight:600; color:#0f172a; margin-bottom:4px; }
+
+    .review-grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+    .review-card { border-radius:20px; border:1px solid rgba(148,163,184,0.3); padding:18px; background:#fffdfc; box-shadow:0 12px 30px rgba(124,45,18,0.08); }
+    .review-title { font-weight:600; color:#7c2d12; }
+    .review-metrics { display:flex; gap:20px; margin-top:12px; }
+    .review-value { font-size:1.6rem; font-weight:600; color:#1f2937; display:block; }
+
+    .trend-grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+    .trend-card { border-radius:20px; border:1px solid rgba(148,163,184,0.2); padding:18px; background:#030712; color:#e2e8f0; box-shadow:0 18px 40px rgba(3,7,18,0.6); }
+    .trend-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .trend-value { font-size:1.4rem; font-weight:600; color:#f5d0fe; }
+
+    .resource-layout { display:grid; gap:20px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+    .alert { margin-top:16px; padding:12px 16px; border-radius:16px; border:1px solid transparent; font-size:0.95rem; }
+    .alert.error { border-color:rgba(248,113,113,0.4); background:rgba(248,113,113,0.15); color:#b91c1c; }
+    .loading-box { margin-top:12px; padding:12px; border-radius:16px; border:1px dashed rgba(148,163,184,0.45); text-align:center; color:#475569; justify-content:center; align-items:center; display:none; }
+  </style>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Studio giảng viên</span>
+        <strong>Phân tích hiệu quả</strong>
+        <p class="muted">Theo dõi KPI lớp học, tương tác học viên và chất lượng nội dung.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <section class="hero-card">
+          <div>
+            <span class="hero-eyebrow">Thống kê real-time</span>
+            <h1 class="hero-title">Hiệu quả giảng dạy</h1>
+            <p id="heroGreeting" class="hero-text">Xin chào, giảng viên!</p>
+            <p class="hero-text">
+              Nắm bắt nhanh sức khỏe lớp học, mức độ tham gia và phản hồi của học viên để tối ưu từng khóa học.
+            </p>
+            <div class="hero-tags">
+              <span>Tăng tiến độ học</span>
+              <span>Giảm ghi chú tồn</span>
+              <span>Cải thiện đánh giá</span>
+            </div>
+          </div>
+          <div class="hero-side">
+            <p class="muted tiny">Gợi ý thao tác</p>
+            <ul class="hero-checklist">
+              <li>Ưu tiên trả lời ghi chú tồn quá 24h.</li>
+              <li>Tải đủ tài liệu trước buổi học kế tiếp.</li>
+              <li>Nhắc học viên hoàn thành bài kiểm tra cuối khóa.</li>
+            </ul>
+            <div class="hero-progress">
+              <div>
+                <span class="hero-number" id="summaryHeroPending">0</span>
+                <p class="hero-note">Đang chờ xử lý</p>
+              </div>
+              <div>
+                <span class="hero-number" id="summaryHeroApproved">0</span>
+                <p class="hero-note">Đã hoàn tất</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div id="dashboardError" class="alert error" style="display:none"></div>
+        <div id="dashboardLoading" class="loading-box" style="display:none">Đang tải dữ liệu...</div>
+
+        <section class="mt-4">
+          <h3>Chỉ số tổng quan</h3>
+          <div id="summaryGrid" class="summary-grid mt-3"></div>
+        </section>
+
+        <section class="mt-6">
+          <div class="list-header">
+            <div>
+              <p class="muted tiny">Tiến độ khóa học</p>
+              <h3>Khóa học nổi bật</h3>
+            </div>
+          </div>
+          <div id="courseTable" class="course-grid mt-3"></div>
+        </section>
+
+        <section class="mt-6">
+          <div class="list-header">
+            <div>
+              <p class="muted tiny">Tương tác & tài nguyên</p>
+              <h3>Các mục cần lưu ý</h3>
+            </div>
+          </div>
+          <div class="interaction-grid">
+            <article class="interaction-card">
+              <p class="muted tiny">Ghi chú học viên</p>
+              <strong><span id="notePending">0</span> đang chờ</strong>
+              <p class="muted tiny"><span id="noteAwait">0</span> yêu cầu bổ sung · <span id="noteResolved">0</span> đã phản hồi</p>
+            </article>
+            <article class="interaction-card">
+              <p class="muted tiny">Tài liệu bài học</p>
+              <strong><span id="resourcePending">0</span> tài liệu chờ duyệt</strong>
+              <p class="muted tiny"><span id="resourceApproved">0</span> đã sẵn sàng · ẩn ít</p>
+            </article>
+            <article class="interaction-card">
+              <p class="muted tiny">Hỗ trợ học viên</p>
+              <strong><span id="supportOpen">0</span> yêu cầu mở</strong>
+              <p class="muted tiny">Thời gian phản hồi trung bình <span id="supportSla"></span></p>
+            </article>
+            <article class="interaction-card">
+              <p class="muted tiny">Ghi chú gần nhất</p>
+              <ul id="noteList" class="interaction-list"></ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="mt-6">
+          <div class="list-header">
+            <div>
+              <p class="muted tiny">Đánh giá & cảm nhận</p>
+              <h3>Trải nghiệm học viên</h3>
+            </div>
+          </div>
+          <div id="reviewList" class="review-grid mt-3"></div>
+        </section>
+
+        <section class="mt-6">
+          <div class="list-header">
+            <div>
+              <p class="muted tiny">Xu hướng 30 ngày gần nhất</p>
+              <h3>Biểu đồ theo dõi</h3>
+            </div>
+          </div>
+          <div id="trendGrid" class="trend-grid mt-3"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Tạo khóa học (Giảng viên)</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .create-trigger{
+      margin-bottom:16px;
+      display:flex;
+      justify-content:flex-start;
+    }
+    .modal{
+      position:fixed;
+      inset:0;
+      display:none;
+      align-items:flex-start;
+      justify-content:center;
+      padding:40px 24px;
+      z-index:120;
+    }
+    .modal.is-active{display:flex;}
+    .modal-backdrop{
+      position:absolute;
+      inset:0;
+      background:rgba(8,10,20,0.55);
+      backdrop-filter:blur(5px);
+    }
+    .modal-panel{
+      position:relative;
+      width:100%;
+      max-width:980px;
+      max-height:90vh;
+      overflow-y:auto;
+      background:radial-gradient(circle at top,#fffdf9,#f0e1d4 80%);
+      border-radius:32px;
+      padding:28px;
+      box-shadow:0 35px 80px rgba(20,8,2,0.35);
+      border:1px solid rgba(255,255,255,0.4);
+    }
+    .modal-close{
+      position:sticky;
+      top:0;
+      margin-left:auto;
+      width:38px;
+      height:38px;
+      border-radius:50%;
+      border:none;
+      background:rgba(0,0,0,0.08);
+      color:#5c3a27;
+      font-size:1.2rem;
+      cursor:pointer;
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, token, requireAuth, qs} from '/app/app-common.js';
+    const el = id => document.getElementById(id);
+
+    function collectPriceState(){
+      const input = el('price');
+      if(!input) return { price: null, isFree: true };
+      const raw = (input.value || '').trim();
+      if(!raw) return { price: null, isFree: true };
+      const parsed = Number(raw);
+      return { price: Number.isFinite(parsed) ? parsed : null, isFree: false };
+    }
+
+    function updateCreatePriceHint(){
+      const hint = document.getElementById('createPriceHint');
+      if(!hint) return;
+      const state = collectPriceState();
+      hint.textContent = state.isFree
+        ? 'Không nhập giá → khóa miễn phí'
+        : 'Đã nhập giá → khóa Pro';
+    }
+
+    window.__teacherCollectPrice = collectPriceState;
+    window.__teacherUpdatePriceHint = updateCreatePriceHint;
+
+    function ensureLegacyLevelOption(value){
+      if(!value) return;
+      const select = el('level');
+      if(!select) return;
+      const options = Array.from(select.options || []);
+      const existed = options.some(opt => opt.value === value);
+      if(!existed){
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        opt.dataset.legacy = 'true';
+        select.appendChild(opt);
+      }
+    }
+    window.ensureLegacyLevelOption = ensureLegacyLevelOption;
+
+    const ROLE_OPTIONS = [
+      { id: 'foundation', label: 'Kiến thức nền' },
+      { id: 'skills', label: 'Kỹ năng' },
+      { id: 'leveling', label: 'Cấp độ' },
+      { id: 'needs', label: 'Nhu cầu' },
+      { id: 'certificate', label: 'Chứng chỉ' },
+      { id: 'student', label: 'Học sinh' },
+    ];
+    let CATEGORY_OPTIONS = [];
+    let roleSelection = new Set();
+    let categorySelection = new Set();
+
+    function normalizeRoleValue(value){
+      return (value || '').toString().trim().toLowerCase();
+    }
+
+    function renderRoleChips(){
+      const host = el('roleChips');
+      if(!host) return;
+      host.innerHTML = ROLE_OPTIONS.map(role => `
+        <button type="button" class="role-pill ${roleSelection.has(role.id) ? 'is-active' : ''}" data-role="${role.id}">
+          ${role.label}
+        </button>
+      `).join('');
+      host.querySelectorAll('.role-pill').forEach(btn => {
+        btn.addEventListener('click', () => toggleRole(btn.dataset.role));
+      });
+      updateRoleSummary();
+    }
+
+    function renderCategoryChips(){
+      const host = el('categoryChips');
+      if(!host) return;
+      host.innerHTML = CATEGORY_OPTIONS.map(cat => `
+        <button type="button" class="role-pill ${categorySelection.has(cat.id) ? 'is-active' : ''}" data-role="${cat.id}">
+          ${cat.label}
+        </button>
+      `).join('');
+      host.querySelectorAll('.role-pill').forEach(btn => {
+        btn.addEventListener('click', () => toggleCategory(btn.dataset.role));
+      });
+      updateCategorySummary();
+    }
+
+    function updateCategorySummary(){
+      const summary = el('categorySummary');
+      if(!summary) return;
+      summary.textContent = categorySelection.size
+        ? `Đã chọn ${categorySelection.size} chuyên đề`
+        : 'Chọn chuyên đề chính cho khóa học';
+    }
+
+    function updateRoleSummary(){
+      const summary = el('roleSummary');
+      if(!summary) return;
+      summary.textContent = roleSelection.size
+        ? `Đã chọn ${roleSelection.size} nhóm đối tượng`
+        : 'Chọn nhóm người học phù hợp (có thể chọn nhiều)';
+    }
+
+    function toggleRole(id){
+      const key = normalizeRoleValue(id);
+      if(!key) return;
+      if(roleSelection.has(key)) roleSelection.delete(key);
+      else roleSelection.add(key);
+      renderRoleChips();
+      renderCategoryChips();
+    }
+
+    function setRoleSelection(values){
+      roleSelection = new Set((values || []).map(normalizeRoleValue).filter(Boolean));
+      renderRoleChips();
+    }
+
+    function getRoleSelection(){
+      return Array.from(roleSelection);
+    }
+
+    function toggleCategory(id){
+      const key = normalizeRoleValue(id);
+      if(!key) return;
+      if(categorySelection.has(key)) categorySelection.delete(key);
+      else categorySelection.add(key);
+      renderCategoryChips();
+    }
+
+    function setCategorySelection(values){
+      categorySelection = new Set((values || []).map(normalizeRoleValue).filter(Boolean));
+      renderCategoryChips();
+    }
+
+    function getCategorySelection(){
+      return Array.from(categorySelection);
+    }
+
+    // expose for legacy inline script
+    window.setCategorySelection = setCategorySelection;
+    window.getCategorySelection = getCategorySelection;
+
+    window.__teacherRoleState = {
+      set: setRoleSelection,
+      get: getRoleSelection,
+    };
+
+    async function loadCategoryOptions(){
+      try{
+        const res = await fetch('/api/public/categories');
+        const data = await res.json();
+        CATEGORY_OPTIONS = Array.isArray(data)
+          ? data.map((c, idx) => ({
+              id: (c.slug || c.id || `cat-${idx}`).toString(),
+              label: c.name || c.slug || `Category ${idx + 1}`,
+            }))
+          : [];
+      }catch(err){
+        console.error('Load categories failed', err);
+      }finally{
+        renderCategoryChips();
+      }
+    }
+
+    async function loadModules(courseId){
+      const box = el('editorBody'); if(!box) return;
+      const list = await api(`/api/courses/${courseId}/modules`);
+      box.innerHTML = (list||[]).map(m => `
+        <div class="card">
+          <h3>Phần: ${m.title} (#${m.id})</h3>
+          <div class="row" style="margin:6px 0">
+            <input id="lTitle-${m.id}" placeholder="Tiêu đề bài học"/>
+            <select id="lType-${m.id}">
+              <option value="video">video</option>
+              <option value="article">article</option>
+              <option value="quiz">quiz</option>
+            </select>
+            <input id="lDur-${m.id}" placeholder="Giây" style="width:100px"/>
+            <button data-mid="${m.id}" class="btn ghost addLesson">Thêm bài học</button>
+          </div>
+          <table>
+            <thead><tr><th>Bài học</th><th>Loại</th><th>Video</th></tr></thead>
+            <tbody>
+              ${(m.lessons||[]).map(l => `
+                <tr>
+                  <td>${l.title} (#${l.id})</td>
+                  <td>${l.type||''}</td>
+                  <td>
+                    <div class="row" style="flex-wrap:wrap; gap:6px;">
+                      <div>
+                        <input type="file" id="vid-${l.id}" accept="video/*"/>
+                        <button data-lid="${l.id}" class="btn ghost uploadVideo">Upload video</button>
+                      </div>
+                      <div class="row" style="flex-wrap:wrap; gap:6px;">
+                        <input type="text" id="vidUrl-${l.id}" placeholder="Dán link YouTube / MP4" style="min-width:240px"/>
+                        <button data-lid="${l.id}" class="btn ghost attachVideoUrl">Gán link</button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`).join('') || '<div class="empty">Chưa có phần nào.</div>';
+
+      box.querySelectorAll('.addLesson').forEach(b => b.onclick = async e => {
+        const mid = e.target.getAttribute('data-mid');
+        const payload = {
+          title: el(`lTitle-${mid}`).value.trim(),
+          type: el(`lType-${mid}`).value,
+          durationSeconds: Number(el(`lDur-${mid}`).value||0),
+          status: 'draft'
+        };
+        await api(`/api/modules/${mid}/lessons`, { method:'POST', body: JSON.stringify(payload) });
+        loadModules(courseId);
+      });
+
+      box.querySelectorAll('.uploadVideo').forEach(b => b.onclick = async e => {
+        const lid = e.target.getAttribute('data-lid');
+        const inp = el(`vid-${lid}`);
+        if(!inp.files.length){ alert('Chèn file video'); return; }
+        const fd = new FormData(); fd.append('file', inp.files[0]);
+        const r = await fetch('/api/upload/video', { method:'POST', headers: token()?{ Authorization:`Bearer ${token()}` }: {}, body: fd });
+        const t = await r.text(); let d; try{ d = t? JSON.parse(t): null;}catch{ d=null; }
+        if(!r.ok){ alert((d && d.message)||r.statusText); return; }
+        await api(`/api/lessons/${lid}/assets`, { method:'POST', body: JSON.stringify({ kind:'video', url: d.url, mime_type: inp.files[0].type||'video/mp4' }) });
+        alert('Gán video cho bài học');
+      });
+
+      box.querySelectorAll('.attachVideoUrl').forEach(b => b.onclick = async e => {
+        const lid = e.target.getAttribute('data-lid');
+        const input = el(`vidUrl-${lid}`);
+        const url = (input?.value || '').trim();
+        if(!url){
+          alert('Nhập link youtube hoặc video bài giảng');
+          return;
+        }
+        await api(`/api/lessons/${lid}/assets`, {
+          method:'POST',
+          body: JSON.stringify({ kind:'video', url, mime_type: 'text/html' })
+        });
+        alert('Hãy gán link cho bài học');
+      });
+    }
+
+    function showEditor(courseId){
+      const editor = el('editor');
+      if(!editor) return;
+      editor.style.display='block';
+      el('cid').textContent = courseId;
+      el('addModuleBtn').onclick = async ()=>{
+        const payload = {
+          title: el('mTitle').value.trim(),
+          sortOrder: Number(el('mSort').value||0)
+        };
+        await api(`/api/courses/${courseId}/modules`, { method:'POST', body: JSON.stringify(payload) });
+        el('mTitle').value='';
+        el('mSort').value='';
+        loadModules(courseId);
+      };
+      loadModules(courseId);
+    }
+
+    async function upload(kind, inputId){
+      const file = el(inputId).files[0];
+      if(!file) return null;
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/upload/${kind}`, { method:'POST', headers: token()?{ Authorization:`Bearer ${token()}` }: {}, body: fd });
+      const text = await r.text();
+      let data; try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      if(!r.ok) throw new Error((data && (data.message||data)) || r.statusText);
+      return data && data.url ? data.url : null;
+    }
+
+    async function create(){
+      try{
+        if(!requireAuth(['TEACHER','MANAGER'])) return;
+        el('createBtn').disabled = true;
+        el('msg').textContent = 'Đang tạo...';
+        const pricing = collectPriceState();
+        const categoryValues = getCategorySelection();
+        const body = {
+          title: el('title').value.trim(),
+          slug: el('slug').value.trim(),
+          shortDesc: el('short').value.trim(),
+          language: el('lang').value,
+          level: el('level').value,
+          status: 'draft',
+          price: pricing.price,
+          isFree: pricing.isFree,
+          targetRoles: getRoleSelection(),
+          categories: categoryValues
+        };
+        const course = await api('/api/teacher/courses', { method:'POST', body: JSON.stringify(body) });
+        el('msg').textContent = `Đã tạo ID=${course.id}`;
+        if(el('thumb').files.length){
+          const url = await upload('image','thumb');
+          if(url){ await api(`/api/teacher/courses/${course.id}/thumbnail`, { method:'POST', body: JSON.stringify({url}) }); }
+        }
+        const submitBtn = el('submitBtn');
+        submitBtn.onclick = async ()=>{
+          try{
+            await api(`/api/teacher/courses/${course.id}/submit`, { method:'POST' });
+            el('msg').textContent = 'Gửi duyệt';
+          }catch(err){
+            el('msg').textContent = 'Gửi chờ duyệt: ' + (err.message||err);
+          }
+        };
+        submitBtn.disabled = false;
+        showEditor(course.id);
+      }catch(e){
+        console.error(e);
+        el('msg').textContent = 'LỖI TẠO: ' + (e.message||e);
+        if(String(e).includes('403')) alert('Bạn cần đăng nhập với vai trò TEACHER/MANAGER');
+      }finally{
+        el('createBtn').disabled = false;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav');
+      mountAdminMenu('adminMenu','teacher-new-course');
+      mountAdminUser('adminUserCard');
+      renderRoleChips();
+      loadCategoryOptions();
+      el('createBtn').addEventListener('click', create);
+      const priceInput = el('price');
+      if(priceInput){
+        priceInput.addEventListener('input', updateCreatePriceHint);
+        updateCreatePriceHint();
+      }
+      const modal = document.getElementById('createModal');
+      const openModalBtn = document.getElementById('openCreateModal');
+      const closeModalBtn = document.getElementById('closeCreateModal');
+      const backdrop = modal?.querySelector('.modal-backdrop');
+      const openModal = () => {
+        if(!modal) return;
+        modal.classList.add('is-active');
+        modal.setAttribute('aria-hidden','false');
+      };
+      const closeModal = () => {
+        if(!modal) return;
+        modal.classList.remove('is-active');
+        modal.setAttribute('aria-hidden','true');
+      };
+      openModalBtn?.addEventListener('click', openModal);
+      closeModalBtn?.addEventListener('click', closeModal);
+      backdrop?.addEventListener('click', closeModal);
+
+      const cid = Number(qs('id'));
+      if(cid){
+        showEditor(cid);
+        el('msg').textContent = `BẠN ĐÃ TẠO KHÓA HỌC ID=${cid}`;
+        openModal();
+      }
+    });
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Studio giảng viên</span>
+        <strong>Xây khóa học mới</strong>
+        <p class="muted">Chuẩn bị nội dung, cấu trúc và media cho học viên.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted">Bắt đầu từ thông tin nền tảng</p>
+          <h1>Tạo khóa học</h1>
+        </div>
+        <div class="create-trigger">
+          <button id="openCreateModal" class="btn">+ Bắt đầu tạo khóa học</button>
+        </div>
+        <div class="modal" id="createModal" aria-hidden="true">
+          <div class="modal-backdrop"></div>
+          <div class="modal-panel">
+            <button class="modal-close" id="closeCreateModal" aria-label="Đóng">&times;</button>
+            <div class="card">
+              <h2>Tạo khóa học (Giảng viên)</h2>
+              <div class="cols">
+                <input id="title" placeholder="Tiêu đề"/>
+                <input id="slug" placeholder="Slug duy nhất"/>
+                <input id="short" placeholder="Mô tả ngắn"/>
+                <label for="lang" class="muted">Ngôn ngữ</label>
+                <select id="lang" aria-label="Ngôn ngữ hiển thị">
+                  <option value="vi">vi</option>
+                  <option value="en">en</option>
+                </select>
+                <div class="field">
+                  <label for="level">Trình độ mục tiêu</label>
+                  <select id="level" aria-label="Chọn trình độ mục tiêu">
+                    <option value="">Chọn mức TOEIC</option>
+                    <option value="350+">350+ - Nền tảng</option>
+                    <option value="450+">450+ - Sơ trung cấp</option>
+                    <option value="550+">550+ - Trung cấp</option>
+                    <option value="650+">650+ - Trung cao</option>
+                    <option value="750+">750+ - Nâng cao</option>
+                    <option value="850+">850+ - Chuyên sâu</option>
+                    <option value="950+">950+ - Master</option>
+                  </select>
+                  <small class="muted">Phân loại theo điểm 350+ đến tối đa.</small>
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                  <span>Nhóm người học</span>
+                  <div id="roleChips" class="role-chip-row"></div>
+                  <small id="roleSummary" class="muted">Chọn nhóm người học phù hợp (có thể chọn nhiều)</small>
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                  <span>Chuyên đề tiếng Anh</span>
+                  <div id="categoryChips" class="role-chip-row"></div>
+                  <small id="categorySummary" class="muted">Chọn chuyên đề trọng tâm cho khóa học</small>
+                </div>
+                <div class="field">
+                  <span>Giá?</span>
+                  <input id="price" placeholder="Giá"/>
+                  <small id="createPriceHint" class="muted"></small>
+                </div>
+                <div>
+                  <label>Thumbnail: <input type="file" id="thumb" accept="image/*"/></label>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px">
+                <button id="createBtn" class="btn">Tạo</button>
+                <button id="submitBtn" class="btn ghost" disabled>Gửi chờ duyệt</button>
+                <span id="msg" class="muted"></span>
+              </div>
+              <p class="muted" style="margin-top:8px">Cần đăng nhập (teacher/manager) – file lưu tại /uploads/…</p>
+            </div>
+            <div class="card" id="editor" style="display:none">
+              <h2>Biên soạn chi tiết (Course ID: <span id="cid"></span>)</h2>
+              <div class="row">
+                <input id="mTitle" placeholder="Tiêu đề phần"/>
+                <input id="mSort" placeholder="Thứ tự" style="width:120px"/>
+                <button id="addModuleBtn" class="btn ghost">Thêm phần</button>
+              </div>
+              <div id="editorBody" style="margin-top:16px"></div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      function el(id){ return document.getElementById(id); }
+      function qs(name){ try{ return new URLSearchParams(location.search).get(name);}catch{return null;} }
+      async function api(path, opts){
+        const token = localStorage.getItem('token');
+        const baseHeaders = {'Content-Type':'application/json'};
+        const headers = Object.assign({}, baseHeaders, (opts&&opts.headers)||{});
+        if(token) headers['Authorization'] = `Bearer ${token}`;
+        const r = await fetch(path, Object.assign({}, opts||{}, { headers }));
+        const t = await r.text(); let d; try{ d = t? JSON.parse(t): null;}catch{ d=t; }
+        if(!r.ok) throw new Error((d && (d.message||d)) || r.statusText);
+        return d;
+      }
+      function ensureButtons(){
+        const row = document.querySelector('.card .row');
+        if(!row) return;
+        if(!el('updateBtn')){
+          const b=document.createElement('button');
+          b.id='updateBtn';
+          b.style.display='none';
+          b.textContent='Cập nhật';
+          b.className='btn ghost';
+          row.insertBefore(b, row.lastElementChild);
+        }
+        if(!el('deleteBtn')){
+          const b=document.createElement('button');
+          b.id='deleteBtn';
+          b.style.display='none';
+          b.textContent='Xóa';
+          b.className='btn danger';
+          row.insertBefore(b, row.lastElementChild);
+        }
+      }
+      async function onReady(){
+        ensureButtons();
+        const cid = Number(qs('id'))||0;
+        if(!cid) return;
+        const ub = el('updateBtn');
+        const db = el('deleteBtn');
+        if(ub) ub.style.display='inline-flex';
+        if(db) db.style.display='inline-flex';
+        try{
+          const d = await api(`/api/teacher/courses/${cid}`);
+          if(el('title')) el('title').value = d.title||'';
+          if(el('slug')) el('slug').value = d.slug||'';
+          if(el('short')) el('short').value = d.shortDesc||'';
+          if(el('lang')) el('lang').value = d.language||'vi';
+          if(el('level')){
+            if(d.level) ensureLegacyLevelOption(d.level);
+            el('level').value = d.level||'';
+          }
+          if(window.__teacherRoleState){
+            window.__teacherRoleState.set(d.targetRoles || []);
+          }
+          setCategorySelection(d.categories || d.specializations || d.tags || []);
+          if(el('price')) el('price').value = d.price!=null? d.price: '';
+          if(window.__teacherUpdatePriceHint){ window.__teacherUpdatePriceHint(); }
+          if(d.thumbnailUrl){
+            let pv = document.getElementById('thumbPreview');
+            if(!pv){
+              pv = document.createElement('img');
+              pv.id='thumbPreview';
+              pv.style.maxWidth='200px';
+              pv.style.display='block';
+              pv.style.marginTop='6px';
+              document.getElementById('thumb').parentElement.appendChild(pv);
+            }
+            const base = '';
+            pv.src = d.thumbnailUrl.startsWith('/') ? `${base}${d.thumbnailUrl}` : d.thumbnailUrl;
+          }
+        }catch(e){
+          const msg = el('msg');
+          if(msg) msg.textContent = 'Không thể tải thông tin khóa học: ' + (e && e.message ? e.message : e);
+        }
+        if(ub) ub.onclick = async function(){
+          const priceData = window.__teacherCollectPrice ? window.__teacherCollectPrice() : { price: null, isFree: true };
+          const roleValues = window.__teacherRoleState ? window.__teacherRoleState.get() : [];
+          const categoryValues = getCategorySelection();
+          const body = {
+            title: el('title')?.value?.trim(),
+            slug: el('slug')?.value?.trim(),
+            shortDesc: el('short')?.value?.trim(),
+            language: el('lang')?.value,
+            level: el('level')?.value,
+            price: priceData.price,
+            isFree: priceData.isFree,
+            targetRoles: roleValues,
+            categories: categoryValues
+          };
+          try{
+            await api(`/api/teacher/courses/${cid}`, { method:'PATCH', body: JSON.stringify(body) });
+            const msg = el('msg'); if(msg) msg.textContent='Đã cập nhật khóa học';
+          }catch(e){
+            const msg = el('msg'); if(msg) msg.textContent='Lỗi cập nhật: '+(e.message||e);
+          }
+        };
+        const sb = document.getElementById('submitBtn');
+        if(sb){
+          sb.disabled = false;
+          sb.onclick = async ()=>{
+            try{
+              await api(`/api/teacher/courses/${cid}/submit`, { method:'POST' });
+              const msg = el('msg'); if(msg) msg.textContent='Đã gửi chờ duyệt';
+            }catch(e){
+              const msg = el('msg'); if(msg) msg.textContent='Lỗi gửi duyệt: '+(e.message||e);
+            }
+          };
+        }
+        if(db) db.onclick = async function(){
+          if(!confirm('Xóa khóa học này?')) return;
+          await api(`/api/teacher/courses/${cid}`, { method:'DELETE' });
+          alert('Đã xóa');
+          location.href='/app/admin/teacher-courses.html';
+        };
+      }
+      document.addEventListener('DOMContentLoaded', onReady);
+    })();
+  </script>
+</body>
+</html>

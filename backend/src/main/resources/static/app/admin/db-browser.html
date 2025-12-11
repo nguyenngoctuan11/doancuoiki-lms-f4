@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>DB Browser (Admin)</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api} from '/app/app-common.js';
+    const el = id => document.getElementById(id);
+    let current = null;
+
+    async function loadTables(){
+      try{
+        const res = await api('/api/admin/db/tables');
+        const tables = res.tables || [];
+        el('tables').innerHTML = tables.map(t=>`<button class="btn ghost table-link" data-name="${t}">${t}</button>`).join('') || '<div class="muted">Không có bảng nào</div>';
+        document.querySelectorAll('.table-link').forEach(btn=> btn.onclick = ()=> openTable(btn.dataset.name));
+        if(tables.length){ openTable(tables[0]); }
+      }catch(e){
+        el('grid').innerHTML = `<div class="empty">Không tải được danh sách bảng: ${(e && e.message)||e}</div>`;
+      }
+    }
+
+    async function openTable(name){
+      current = name;
+      el('cur').textContent = name;
+      try{
+        const res = await api(`/api/admin/db/table/${encodeURIComponent(name)}?offset=0&limit=50`);
+        const cols = res.columns || [];
+        const rows = res.rows || [];
+        el('grid').innerHTML = `
+          <table>
+            <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${rows.map(r=>`<tr>${r.map(v=>`<td>${v??''}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="'+cols.length+'" class="muted">Không có dữ liệu</td></tr>'}
+            </tbody>
+          </table>`;
+      }catch(e){
+        el('grid').innerHTML = `<div class="empty">Lỗi tải dữ liệu bảng: ${(e && e.message)||e}</div>`;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav');
+      mountAdminMenu('adminMenu','db-browser');
+      mountAdminUser('adminUserCard');
+      loadTables();
+    });
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Dành cho quản trị</span>
+        <strong>DB Browser</strong>
+        <p class="muted">Quan sát nhanh dữ liệu SQL Server.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted">Theo dõi dữ liệu trực tiếp</p>
+          <h1>Bảng dữ liệu</h1>
+        </div>
+        <div class="card" style="display:flex;gap:24px;flex-wrap:wrap">
+          <div style="flex:0 0 240px;max-height:60vh;overflow:auto;">
+            <h3>Schema dbo</h3>
+            <div id="tables" class="grid" style="gap:8px"></div>
+          </div>
+          <div style="flex:1;min-width:320px">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <div>
+                <h3 style="margin:0">Bảng: <span id="cur" class="badge">Chưa chọn</span></h3>
+                <p class="muted" style="margin:4px 0 0">Hiển thị tối đa 50 dòng.</p>
+              </div>
+              <button class="btn ghost" onclick="history.back()">← Quay lại</button>
+            </div>
+            <div id="grid" style="margin-top:16px;overflow:auto"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

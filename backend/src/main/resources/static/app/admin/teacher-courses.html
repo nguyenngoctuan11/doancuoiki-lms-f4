@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Khóa học của tôi</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .table-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: linear-gradient(135deg, #fff6ec, #f3e0d0);
+      border-bottom: 1px solid rgba(221,191,163,0.5);
+      padding: 16px;
+      margin-bottom: 12px;
+      border-radius: 24px;
+      box-shadow: 0 18px 40px rgba(86,47,20,0.08);
+    }
+    .table-scroll {
+      max-height: 70vh;
+      overflow: auto;
+    }
+    .table-scroll table {
+      min-width: 920px;
+    }
+    .table-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255,255,255,0.9);
+      color:#7d4f2a;
+      border-bottom:1px solid rgba(214,189,167,0.8);
+    }
+    .toolbar-actions{
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .toolbar-actions .btn{
+      padding:10px 22px;
+      border-radius:999px;
+      border:1px solid rgba(214,189,167,0.7);
+      background:#fffaf4;
+      color:#6d3e1f;
+      box-shadow:0 12px 28px rgba(93,58,34,0.12);
+      letter-spacing:.02em;
+      transition:transform .2s ease,box-shadow .2s ease,background .2s ease;
+    }
+    .toolbar-actions .btn:hover{
+      transform:translateY(-1px);
+      box-shadow:0 18px 36px rgba(0,0,0,0.35);
+    }
+    .toolbar-actions .btn:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+      box-shadow:none;
+    }
+    .toolbar-actions #refresh{
+      background:#fef3e3;
+      border-color:rgba(221,191,163,0.9);
+      color:#8c562c;
+    }
+    .toolbar-actions #bulkSubmit{
+      background:linear-gradient(135deg,#f0bb7a,#c37a38);
+      border:none;
+      color:#fff;
+      box-shadow:0 20px 36px rgba(195,123,57,0.35);
+    }
+    .toolbar-actions #bulkDelete{
+      background:linear-gradient(135deg,#fdb0c6,#f06b8a);
+      border:none;
+      color:#fff;
+      box-shadow:0 18px 32px rgba(208,83,116,0.35);
+    }
+    .toolbar-actions #clearSelection{
+      background:#fff6ed;
+      border-color:rgba(198,164,130,0.8);
+      color:#8c5c35;
+    }
+    .toolbar-actions a.btn{
+      background:linear-gradient(135deg,#dba66d,#b07034);
+      color:#fff;
+      border:none;
+      box-shadow:0 18px 36px rgba(176,112,52,0.4);
+    }
+    .course-actions{
+      gap:12px;
+      flex-wrap:nowrap;
+      justify-content:flex-end;
+      align-items:center;
+    }
+    .course-actions .soft-edit{
+      background:#fff7ef;
+      border-color:#e3c8b1;
+      color:#a06136;
+      box-shadow:0 10px 22px rgba(160,97,54,0.18);
+    }
+    .course-actions .btn-send{
+      min-width:120px;
+      background:linear-gradient(135deg,#c88545,#a35b25);
+      border:none;
+      color:#fff;
+      box-shadow:0 20px 40px rgba(163,91,37,0.4);
+    }
+    .course-actions .btn-send:hover{
+      box-shadow:0 24px 44px rgba(163,91,37,0.45);
+    }
+    .course-actions .btn-send.alt{
+      background:linear-gradient(135deg,#f472b6,#ec4899);
+      box-shadow:0 18px 40px rgba(236,72,153,0.35);
+    }
+    .course-actions .soft-delete{
+      background:rgba(255,235,239,0.95);
+      border-color:#fecdd3;
+      color:#c01a3b;
+      box-shadow:none;
+    }
+    .course-actions .soft-delete:hover{
+      background:#ffd9df;
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, requireAuth} from '/app/app-common.js';
+    const rows = () => document.getElementById('rows');
+    const selection = new Set();
+    const bulkButtonIds = ['bulkSubmit','bulkDelete','clearSelection'];
+
+    function getBulkButtons(){
+      return bulkButtonIds.map((id) => document.getElementById(id)).filter(Boolean);
+    }
+
+    function updateBulkState(){
+      const count = selection.size;
+      const counter = document.getElementById('bulkCount');
+      if(counter) counter.textContent = count;
+      getBulkButtons().forEach((btn) => { btn.disabled = count === 0; });
+      const master = document.getElementById('checkAll');
+      if(!master) return;
+      const rowChecks = Array.from(document.querySelectorAll('.row-check'));
+      if(rowChecks.length === 0){
+        master.checked = false;
+        master.indeterminate = false;
+        return;
+      }
+      const checkedCount = rowChecks.filter((cb) => cb.checked).length;
+      master.checked = checkedCount === rowChecks.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < rowChecks.length;
+    }
+
+    function setSelected(id, checked){
+      const key = String(id);
+      if(checked) selection.add(key);
+      else selection.delete(key);
+    }
+
+    async function load(){
+      if(!requireAuth(['TEACHER','MANAGER'])) return;
+      const list = await api('/api/teacher/courses/my');
+      const ids = new Set((list || []).map((c) => String(c.id)));
+      Array.from(selection).forEach((id) => { if(!ids.has(id)) selection.delete(id); });
+      rows().innerHTML = (list || []).map((c) => `
+        <tr>
+          <td><input type="checkbox" class="row-check" data-id="${c.id}" ${selection.has(String(c.id)) ? 'checked' : ''}></td>
+          <td>#${c.id}</td>
+          <td>
+            <div style="font-weight:600;color:#3a2314">${c.title}</div>
+            <div class="muted" style="font-size:.82rem;color:#6a4630">${c.slug}</div>
+          </td>
+          <td><span class="badge ${c.status==='published'?'ok':''}">${c.status || ''}</span></td>
+          <td><span class="badge ${c.approvalStatus==='approved'?'ok':(c.approvalStatus==='rejected'?'err':'')}">${c.approvalStatus || 'draft'}</span></td>
+          <td>${(c.createdAt || '').toString().replace('T',' ')}</td>
+          <td class="row course-actions">
+          <a class="btn secondary action-icon edit soft-edit" href="/app/admin/teacher-new-course.html?id=${c.id}" aria-label="Chỉnh sửa">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 17.25V21h3.75L18.81 9.94l-3.75-3.75z"></path>
+              <path d="M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0L15.13 5.12l3.75 3.75z"></path>
+            </svg>
+          </a>
+          <button class="btn submit btn-send alt" data-id="${c.id}">Gửi duyệt</button>
+          <button class="btn danger delete action-icon danger soft-delete" data-id="${c.id}" aria-label="Xóa">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 6H3"></path>
+              <path d="M8 6V4h8v2"></path>
+              <path d="M19 6l-1 14H6L5 6"></path>
+              <path d="M10 11v6"></path>
+              <path d="M14 11v6"></path>
+            </svg>
+          </button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="7" class="muted">Chưa có khóa học nào.</td></tr>';
+
+      document.querySelectorAll('.row-check').forEach((cb) => {
+        cb.addEventListener('change', (e) => {
+          const id = e.target.getAttribute('data-id');
+          setSelected(id, e.target.checked);
+          updateBulkState();
+        });
+      });
+
+      document.querySelectorAll('.submit').forEach((btn) => btn.onclick = async (e) => {
+        const id = e.target.getAttribute('data-id');
+        await api(`/api/teacher/courses/${id}/submit`, {method:'POST'});
+        alert('Đã gửi chờ duyệt');
+        selection.delete(String(id));
+        load();
+      });
+
+      document.querySelectorAll('.delete').forEach((btn) => btn.onclick = async (e) => {
+        const id = e.target.getAttribute('data-id');
+        if(!confirm('Xóa khóa học này?')) return;
+        await api(`/api/teacher/courses/${id}`, {method:'DELETE'});
+        selection.delete(String(id));
+        load();
+      });
+
+      updateBulkState();
+    }
+
+    async function bulkSubmit(){
+      if(selection.size === 0) return;
+      if(!confirm(`Gửi duyệt ${selection.size} khóa học đã chọn?`)) return;
+      for(const id of Array.from(selection)){
+        try{
+          await api(`/api/teacher/courses/${id}/submit`, {method:'POST'});
+        }catch(err){
+          alert(`Không gửi duyệt được khóa #${id}: ${err.message || err}`);
+        }
+      }
+      alert('Đã gửi duyệt hàng loạt');
+      selection.clear();
+      load();
+    }
+
+    async function bulkDelete(){
+      if(selection.size === 0) return;
+      if(!confirm(`Xóa ${selection.size} khóa học đã chọn?`)) return;
+      for(const id of Array.from(selection)){
+        try{
+          await api(`/api/teacher/courses/${id}`, {method:'DELETE'});
+        }catch(err){
+          alert(`Không xóa được khóa #${id}: ${err.message || err}`);
+        }
+      }
+      alert('Đã xóa hàng loạt');
+      selection.clear();
+      load();
+    }
+
+    function clearSelection(){
+      selection.clear();
+      document.querySelectorAll('.row-check').forEach((cb) => cb.checked = false);
+      const master = document.getElementById('checkAll');
+      if(master){
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      updateBulkState();
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav');
+      mountAdminMenu('adminMenu','teacher-courses');
+      mountAdminUser('adminUserCard');
+      load();
+      document.getElementById('refresh').onclick = load;
+      document.getElementById('bulkSubmit').onclick = bulkSubmit;
+      document.getElementById('bulkDelete').onclick = bulkDelete;
+      document.getElementById('clearSelection').onclick = clearSelection;
+      document.getElementById('checkAll').addEventListener('change', (e)=>{
+        const checked = e.target.checked;
+        document.querySelectorAll('.row-check').forEach((cb) => {
+          cb.checked = checked;
+          setSelected(cb.getAttribute('data-id'), checked);
+        });
+        updateBulkState();
+      });
+    });
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Bảng điều khiển</span>
+        <strong>Không gian giảng viên</strong>
+        <p class="muted">Theo dõi toàn bộ khóa học của bạn.</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted" style="color:#7b4c2c;font-weight:600;letter-spacing:.04em">Tổng quan nhanh</p>
+          <h1 style="color:#2b1508;font-size:2.2rem">Khóa học của tôi</h1>
+        </div>
+        <div class="card">
+          <div class="row table-toolbar" style="justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+            <div>
+              <h2 style="margin:0;color:#2f190a">Danh sách khóa học</h2>
+              <p class="muted" style="margin:4px 0 0;color:#7c5135;font-weight:500">Quản lý bản nháp, trạng thái và gửi duyệt.</p>
+            </div>
+            <div class="row toolbar-actions" style="gap:8px;flex-wrap:wrap">
+              <button id="refresh" class="btn ghost">Làm mới</button>
+              <button id="bulkSubmit" class="btn" disabled>Gửi duyệt đã chọn (<span id="bulkCount">0</span>)</button>
+              <button id="bulkDelete" class="btn danger" disabled>Xóa đã chọn</button>
+              <button id="clearSelection" class="btn ghost" disabled>Bỏ chọn</button>
+              <a class="btn" href="/app/admin/teacher-new-course.html">+ Tạo khóa học</a>
+            </div>
+          </div>
+          <div class="table-scroll" style="margin-top:16px">
+            <table>
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="checkAll"/></th>
+                  <th>ID</th>
+                  <th>Khóa học</th>
+                  <th>Trạng thái</th>
+                  <th>Duyệt</th>
+                  <th>Tạo lúc</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

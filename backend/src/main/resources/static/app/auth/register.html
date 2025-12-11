@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Đăng ký</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import {mountNav, api, setAuth} from '../app-common.js';
+    const el = id => document.getElementById(id);
+    async function register(){
+      el('msg').textContent = 'Đang tạo tài khoản...';
+      try{
+        const body = { email: el('email').value.trim(), fullName: el('name').value.trim(), password: el('password').value, role: el('role').value };
+        const res = await api('/api/auth/register', { method:'POST', body: JSON.stringify(body) });
+        setAuth(res);
+        el('msg').textContent = 'Đăng ký thành công';
+        location.href = '/app/courses.html';
+      }catch(e){ el('msg').textContent = 'Lỗi: ' + e.message; }
+    }
+    window.addEventListener('DOMContentLoaded', () => { mountNav('nav'); el('registerBtn').onclick = register; });
+  </script>
+</head>
+<body>
+  <div id="nav"></div>
+  <div class="container">
+    <div class="card" style="max-width:520px">
+      <h2>Đăng ký</h2>
+      <div class="grid">
+        <input id="email" placeholder="Email"/>
+        <input id="name" placeholder="Họ tên"/>
+        <input id="password" type="password" placeholder="Mật khẩu"/>
+        <select id="role"><option value="student">Học viên</option><option value="teacher">Giảng viên</option></select>
+        <button id="registerBtn">Tạo tài khoản</button>
+        <div id="msg" class="muted"></div>
+        <div class="muted">Đã có tài khoản? <a href="/app/auth/login.html">Đăng nhập</a></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

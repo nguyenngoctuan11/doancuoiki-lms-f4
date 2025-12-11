@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Chi tiết khóa học (Duyệt)</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .lesson-preview {
+      margin-top: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.03);
+    }
+    .lesson-preview video,
+    .lesson-preview iframe {
+      width: 100%;
+      height: 320px;
+      display: block;
+    }
+    .lesson-desc {
+      margin-top: 8px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.85);
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, qs, requireAuth} from '/app/app-common.js';
+    const el = id => document.getElementById(id);
+    const id = Number(qs('id'));
+    const normalizeVideoUrl = (url) => {
+      if(!url) return null;
+      const trimmed = String(url).trim();
+      if(trimmed.includes("youtube.com") || trimmed.includes("youtu.be")){
+        let id = trimmed;
+        if(trimmed.includes("watch?v=")){
+          id = trimmed.split("watch?v=")[1]?.split("&")[0];
+        }else if(trimmed.includes("youtu.be/")){
+          id = trimmed.split("youtu.be/")[1]?.split("?")[0];
+        }
+        return { type: "youtube", url: `https://www.youtube.com/embed/${id}` };
+      }
+      return { type: "video", url: trimmed };
+    };
+
+    const renderLessonMedia = (lesson) => {
+      const src = normalizeVideoUrl(lesson.video_url);
+      if(!src) return "";
+      if(src.type === "youtube"){
+        return `
+          <div class="lesson-preview">
+            <iframe src="${src.url}" title="${lesson.title || "Lesson video"}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+          </div>`;
+      }
+      return `
+        <div class="lesson-preview">
+          <video controls src="${src.url}"></video>
+        </div>`;
+    };
+
+    const renderLessonRows = (lessons = []) => lessons.map((l) => {
+      const media = renderLessonMedia(l);
+      const desc = l.long_desc || l.description || "";
+      return `
+        <tr>
+          <td>${l.title}</td>
+          <td>${l.type || ""}</td>
+          <td>${l.duration_seconds ? Math.floor(l.duration_seconds / 60) + ":" + String(l.duration_seconds % 60).padStart(2, "0") : ""}</td>
+          <td>${l.status || ""}</td>
+        </tr>
+        ${(media || desc) ? `<tr><td colspan="4">
+            ${media || ""}
+            ${desc ? `<div class="lesson-desc">${desc}</div>` : ""}
+        </td></tr>` : ""}`;
+    }).join("");
+
+    async function load(){
+      if(!requireAuth(['MANAGER'])) return;
+      const d = await api(`/api/manager/courses/${id}/detail-sql`);
+      el('title').textContent = d.title;
+      el('meta').textContent = `Slug: ${d.slug} | Level: ${d.level||''} | Status: ${d.status||''}`;
+      el('creator').textContent = `Người tạo: ${d.created_by_name||''} <${d.created_by_email||''}>`;
+      const box = el('modules');
+      box.innerHTML = (d.modules||[]).map(m => `
+        <div class="card">
+          <h3>Phần: ${m.title} (#${m.id})</h3>
+          <table>
+            <thead><tr><th>Bài học</th><th>Loại</th><th>Thời lượng</th><th>Trạng thái</th></tr></thead>
+            <tbody>
+              ${renderLessonRows(m.lessons || [])}
+            </tbody>
+          </table>
+        </div>`).join('') || '<div class="empty">Chưa có module nào</div>';
+    }
+    async function approve(){
+      await api(`/api/manager/courses/${id}/approve`, {method:'POST'});
+      alert('Đã duyệt');
+      location.href='/app/admin/manager-review.html';
+    }
+    async function reject(){
+      const note = prompt('Lý do từ chối? (tùy chọn)','');
+      await api(`/api/manager/courses/${id}/reject`, {method:'POST', body: JSON.stringify({note})});
+      alert('Đã từ chối');
+      location.href='/app/admin/manager-review.html';
+    }
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav');
+      mountAdminMenu('adminMenu','manager-review');
+      mountAdminUser('adminUserCard');
+      load();
+      el('approve').onclick=approve;
+      el('reject').onclick=reject;
+    });
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Bảng điều khiển</span>
+        <strong>Quản lý LMS</strong>
+        <p class="muted">Không gian dành cho giảng viên & quản lý</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="card">
+          <p class="muted" style="margin:0 0 4px">Đang xem chi tiết</p>
+          <h1 id="title" style="margin:0 0 8px">Chi tiết khóa học</h1>
+          <div class="muted" id="meta"></div>
+          <div class="muted" id="creator" style="margin-top:4px"></div>
+          <div class="row" style="margin-top:16px">
+            <button id="approve" class="btn">Duyệt</button>
+            <button id="reject" class="btn danger">Từ chối</button>
+            <a class="btn ghost" href="/app/admin/manager-review.html">← Quay lại danh sách</a>
+          </div>
+        </div>
+        <div id="modules" class="grid"></div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Đăng nhập</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .auth-panel{
+      width:min(520px,100%);
+    }
+    .auth-panel .field input{
+      width:100%;
+      padding:14px 16px;
+      border-radius:16px;
+    }
+  </style>
+  <script type="module">
+    import {mountNav, api, setAuth} from '../app-common.js';
+    const el = (id) => document.getElementById(id);
+    async function login(){
+      el('msg').textContent = 'Đang đăng nhập...';
+      try{
+        const res = await api('/api/auth/login', {
+          method:'POST',
+          body: JSON.stringify({
+            email: el('email').value.trim(),
+            password: el('password').value
+          })
+        });
+        setAuth(res);
+        el('msg').textContent = 'Đăng nhập thành công';
+        location.href = '/app/admin/teacher-reviews.html';
+      }catch(e){
+        el('msg').textContent = 'Lỗi: ' + e.message;
+      }
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+      mountNav('nav');
+      el('loginBtn').onclick = login;
+    });
+  </script>
+</head>
+<body class="auth-body">
+  <div id="nav"></div>
+  <div class="auth-shell">
+    <div class="auth-panel card">
+      <div class="auth-header">
+        <span class="badge">Không gian quản trị</span>
+        <h1>Welcome back</h1>
+        <p class="muted">Đăng nhập để tiếp tục quản lý khóa học, giảng viên và cộng đồng học viên.</p>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" placeholder="you@example.com"/>
+      </div>
+      <div class="field">
+        <label for="password">Mật khẩu</label>
+        <input id="password" type="password" placeholder="••••••••"/>
+      </div>
+      <div class="auth-status" id="msg"></div>
+      <div class="auth-actions">
+        <button id="loginBtn" class="btn large">Đăng nhập</button>
+        <div class="muted small">Chưa có tài khoản? <a href="/app/auth/register.html">Đăng ký</a></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

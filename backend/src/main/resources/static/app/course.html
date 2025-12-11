@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Chỉnh sửa khóa học</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, requireAuth, qs, token} from './app-common.js';
+
+    const el = (id) => document.getElementById(id);
+    const courseId = Number(qs('id'));
+
+    const refs = {
+      formMsg: () => el('formMsg'),
+      heading: () => el('courseHeading'),
+      meta: () => el('courseMeta'),
+      thumbPreview: () => el('thumbPreview'),
+      thumbPlaceholder: () => el('thumbPlaceholder')
+    };
+
+    function priceState(){
+      const priceInput = el('price');
+      if(!priceInput) return { value: null, isFree: true };
+      const raw = (priceInput.value || '').trim();
+      if(!raw) return { value: null, isFree: true };
+      const parsed = Number(raw);
+      return { value: Number.isFinite(parsed) ? parsed : null, isFree: false };
+    }
+
+    function updatePriceHint(){
+      const hint = document.getElementById('priceHint');
+      if(!hint) return;
+      const state = priceState();
+      hint.textContent = state.isFree
+        ? 'Không nhập giá ⇒ khóa miễn phí'
+        : 'Đã nhập giá ⇒ khóa Pro';
+    }
+
+    function formatDate(value){
+      if(!value) return '--';
+      try{ return new Date(value).toLocaleString('vi-VN'); }catch{ return value; }
+    }
+
+    async function loadCourse(){
+      refs.formMsg().textContent = 'Đang tải khóa học...';
+      try{
+        const course = await api(`/api/courses/${courseId}`);
+        el('title').value = course.title || '';
+        el('slug').value = course.slug || '';
+        el('shortDesc').value = course.shortDesc || '';
+        el('language').value = course.language || 'vi';
+        el('level').value = course.level || 'beginner';
+        el('status').value = course.status || 'draft';
+        el('price').value = course.price != null ? course.price : '';
+        el('thumbnailUrl').value = course.thumbnailUrl || '';
+        refs.heading().textContent = course.title || `Khóa học #${course.id}`;
+        refs.meta().innerHTML = `
+          <small class="muted">Người tạo: ${course.createdByEmail || '--'} | ID #${course.id}</small><br/>
+          <small class="muted">Phê duyệt: ${course.approvalStatus || '--'}</small>
+        `;
+        updateThumbnailPreview(course.thumbnailUrl);
+        updatePriceHint();
+        refs.formMsg().textContent = '';
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    function collectForm(){
+      const pricing = priceState();
+      return {
+        title: el('title').value.trim(),
+        slug: el('slug').value.trim(),
+        shortDesc: el('shortDesc').value.trim(),
+        language: el('language').value,
+        level: el('level').value,
+        status: el('status').value,
+        price: pricing.value,
+        isFree: pricing.isFree,
+        thumbnailUrl: el('thumbnailUrl').value.trim()
+      };
+    }
+
+    async function saveCourse(){
+      const payload = collectForm();
+      if(!payload.title || !payload.slug){
+        refs.formMsg().textContent = 'Tiêu đề và slug không được bỏ trống.';
+        return;
+      }
+      refs.formMsg().textContent = 'Đang lưu thay đổi...';
+      try{
+        await api(`/api/courses/${courseId}`, { method:'PUT', body: JSON.stringify(payload) });
+        location.href = '/app/courses.html?updated=1';
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    async function uploadThumbnail(){
+      const input = el('thumbFile');
+      if(!input.files.length){
+        refs.formMsg().textContent = 'Chọn ảnh trước khi tải lên.';
+        return;
+      }
+      refs.formMsg().textContent = 'Đang tải ảnh...';
+      try{
+        const fd = new FormData();
+        fd.append('file', input.files[0]);
+        const headers = token()? { Authorization:`Bearer ${token()}` } : {};
+        const res = await fetch('/api/upload/image', { method:'POST', headers, body: fd });
+        const text = await res.text();
+        let data; try{ data = text ? JSON.parse(text) : null; }catch{ data = null; }
+        if(!res.ok) throw new Error((data && data.message) || res.statusText);
+        el('thumbnailUrl').value = data.url || '';
+        updateThumbnailPreview(data.url);
+        refs.formMsg().textContent = 'Đã cập nhật thumbnail.';
+      }catch(err){
+        refs.formMsg().textContent = err.message || err;
+      }
+    }
+
+    function updateThumbnailPreview(url){
+      if(url){
+        refs.thumbPreview().src = url;
+        refs.thumbPreview().hidden = false;
+        refs.thumbPlaceholder().hidden = false;
+        refs.thumbPlaceholder().textContent = '';
+        refs.thumbPlaceholder().style.display = 'none';
+      }else{
+        refs.thumbPreview().hidden = true;
+        refs.thumbPlaceholder().style.display = 'flex';
+        refs.thumbPlaceholder().textContent = 'Chưa có ảnh';
+      }
+    }
+
+    async function loadModules(){
+      const container = el('modules');
+      container.innerHTML = '<div class="muted">Đang tải modules...</div>';
+      try{
+        const modules = await api(`/api/courses/${courseId}/modules`);
+        if(!modules.length){
+          container.innerHTML = '<div class="empty">Chưa có module nào.</div>';
+          return;
+        }
+        container.innerHTML = modules.map(m => `
+          <div class="card">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <div><strong>Phần: ${m.title}</strong> <span class="muted">(#${m.id})</span></div>
+              <div class="row">
+                <input data-mid="${m.id}" class="m-title" value="${m.title}"/>
+                <input data-mid="${m.id}" class="m-sort" value="${m.sortOrder||0}" style="width:90px"/>
+                <button class="btn ghost tiny m-save" data-mid="${m.id}">Lưu</button>
+                <button class="btn ghost tiny danger m-del" data-mid="${m.id}">Xóa</button>
+              </div>
+            </div>
+            <table>
+              <thead><tr><th>Bài học</th><th>Loại</th><th>Thời lượng (s)</th><th>Thứ tự</th><th>Trạng thái</th><th></th></tr></thead>
+              <tbody>
+                ${(m.lessons||[]).map(l => `
+                  <tr>
+                    <td>${l.title} (#${l.id})</td>
+                    <td>${l.type||'--'}</td>
+                    <td>${l.durationSeconds||0}</td>
+                    <td>${l.sortOrder||0}</td>
+                    <td>${l.status||'draft'}</td>
+                    <td class="row">
+                      <button class="btn ghost tiny l-del" data-lid="${l.id}">Xóa</button>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+            <div class="row" style="margin-top:8px">
+              <input id="lTitle-${m.id}" placeholder="Tiêu đề bài học"/>
+              <select id="lType-${m.id}">
+                <option value="video">video</option>
+                <option value="article">article</option>
+                <option value="quiz">quiz</option>
+              </select>
+              <input id="lDur-${m.id}" placeholder="Giây" style="width:90px"/>
+              <input id="lSort-${m.id}" placeholder="Thứ tự" style="width:90px"/>
+              <select id="lStatus-${m.id}"><option>draft</option><option>published</option></select>
+              <button class="btn ghost tiny l-add" data-mid="${m.id}">Thêm bài học</button>
+            </div>
+          </div>
+        `).join('');
+
+        container.querySelectorAll('.m-save').forEach(btn => btn.onclick = async ()=>{
+          const mid = btn.dataset.mid;
+          const title = document.querySelector(`.m-title[data-mid="${mid}"]`).value;
+          const sortOrder = Number(document.querySelector(`.m-sort[data-mid="${mid}"]`).value||0);
+          await api(`/api/modules/${mid}`, { method:'PATCH', body: JSON.stringify({ title, sortOrder }) });
+          loadModules();
+        });
+        container.querySelectorAll('.m-del').forEach(btn => btn.onclick = async ()=>{
+          const mid = btn.dataset.mid;
+          if(confirm('Xóa module này?')){
+            await api(`/api/modules/${mid}`, { method:'DELETE' });
+            loadModules();
+          }
+        });
+        container.querySelectorAll('.l-add').forEach(btn => btn.onclick = async ()=>{
+          const mid = btn.dataset.mid;
+          const payload = {
+            title: el(`lTitle-${mid}`).value.trim(),
+            type: el(`lType-${mid}`).value,
+            durationSeconds: Number(el(`lDur-${mid}`).value||0),
+            sortOrder: Number(el(`lSort-${mid}`).value||0),
+            status: el(`lStatus-${mid}`).value
+          };
+          await api(`/api/modules/${mid}/lessons`, { method:'POST', body: JSON.stringify(payload) });
+          loadModules();
+        });
+        container.querySelectorAll('.l-del').forEach(btn => btn.onclick = async ()=>{
+          const lid = btn.dataset.lid;
+          if(confirm('Xóa bài học này?')){
+            await api(`/api/lessons/${lid}`, { method:'DELETE' });
+            loadModules();
+          }
+        });
+      }catch(err){
+        container.innerHTML = `<div class="err">${err.message || err}</div>`;
+      }
+    }
+
+    async function addModule(){
+      const payload = {
+        title: el('mTitle').value.trim(),
+        sortOrder: Number(el('mSort').value||0)
+      };
+      if(!payload.title){
+        alert('Nhập tiêu đề module');
+        return;
+      }
+      await api(`/api/courses/${courseId}/modules`, { method:'POST', body: JSON.stringify(payload) });
+      el('mTitle').value = '';
+      el('mSort').value = '';
+      loadModules();
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      if(!requireAuth(['MANAGER'])) return;
+      mountNav('nav','sidebar');
+      mountAdminMenu('adminMenu','/app/courses.html');
+      mountAdminUser('adminUserCard');
+      document.getElementById('saveBtn').addEventListener('click', saveCourse);
+      document.getElementById('cancelBtn').addEventListener('click', ()=> location.href='/app/courses.html');
+      document.getElementById('addModuleBtn').addEventListener('click', addModule);
+      document.getElementById('thumbUploadBtn').addEventListener('click', uploadThumbnail);
+      el('thumbnailUrl').addEventListener('input', (e)=> updateThumbnailPreview(e.target.value.trim()));
+      el('price').addEventListener('input', updatePriceHint);
+      loadCourse();
+      loadModules();
+    });
+  </script>
+</head>
+<body>
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div id="nav" data-variant="compact"></div>
+      <div class="admin-brand">
+        <span class="eyebrow">Manager</span>
+        <strong>Chỉnh sửa khóa học</strong>
+      </div>
+      <div id="adminMenu" class="admin-menu"></div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+    </aside>
+    <main class="admin-main">
+      <div class="admin-page-header">
+        <span class="eyebrow">Khoá học</span>
+        <h1 id="courseHeading">Khóa học</h1>
+        <p class="muted" id="courseMeta"></p>
+      </div>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <h2>Thông tin chung</h2>
+            <p class="muted">Biểu mẫu chỉnh sửa giống biểu mẫu tạo.</p>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="saveBtn">Lưu thay đổi</button>
+            <button class="btn ghost" id="cancelBtn">Quay lại danh sách</button>
+          </div>
+        </div>
+        <div class="cols">
+          <label class="field"><span>Tiêu đề</span><input id="title" placeholder="Tên khóa học"/></label>
+          <label class="field"><span>Slug</span><input id="slug" placeholder="slug-duy-nhat"/></label>
+          <label class="field"><span>Ngôn ngữ</span>
+            <select id="language"><option value="vi">vi</option><option value="en">en</option></select>
+          </label>
+          <label class="field"><span>Level</span>
+            <select id="level">
+              <option value="beginner">beginner</option>
+              <option value="intermediate">intermediate</option>
+              <option value="advanced">advanced</option>
+            </select>
+          </label>
+          <label class="field"><span>Trạng thái</span>
+            <select id="status">
+              <option value="draft">draft</option>
+              <option value="pending">pending</option>
+              <option value="published">published</option>
+              <option value="archived">archived</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Giá (VND)</span>
+            <input id="price" type="number" min="0" step="10000"/>
+            <small id="priceHint" class="muted"></small>
+          </label>
+          <label class="field" style="grid-column:span 2;">
+            <span>Mô tả ngắn</span>
+            <textarea id="shortDesc" placeholder="Tối đa ~160 ký tự"></textarea>
+          </label>
+          <label class="field">
+            <span>Thumbnail URL</span>
+            <input id="thumbnailUrl" placeholder="https://..."/>
+          </label>
+          <div class="field">
+            <span>Ảnh xem trước</span>
+            <div class="thumb-box">
+              <img id="thumbPreview" class="thumb-large" hidden alt="Thumbnail"/>
+              <div id="thumbPlaceholder" class="thumb-large" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted)">Chưa có ảnh</div>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <input type="file" id="thumbFile" accept="image/*"/>
+              <button class="btn ghost tiny" type="button" id="thumbUploadBtn">Tải ảnh lên</button>
+            </div>
+          </div>
+        </div>
+        <div id="formMsg" class="muted" style="margin-top:12px;"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <h2>Modules & Bài học</h2>
+            <p class="muted">Tạo modules mới hoặc thêm bài học.</p>
+          </div>
+        </div>
+        <div class="row">
+          <input id="mTitle" placeholder="Tiêu đề module"/>
+          <input id="mSort" placeholder="Thứ tự" style="width:120px"/>
+          <button class="btn ghost" id="addModuleBtn">Thêm module</button>
+        </div>
+        <div id="modules" style="margin-top:16px;"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

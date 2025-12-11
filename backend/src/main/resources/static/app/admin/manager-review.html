@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Duyệt khóa học (Quản lý)</title>
+  <link rel="stylesheet" href="/app/app.css"/>
+  <style>
+    .table-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: radial-gradient(circle at top,#fff4e9,#ead7c5 70%);
+      border:1px solid rgba(217,189,166,0.7);
+      border-radius:24px;
+      padding:18px;
+      margin-bottom: 12px;
+      box-shadow:0 18px 40px rgba(103,67,36,0.15);
+      color:#2f1a0e;
+    }
+    .table-scroll {
+      max-height: 70vh;
+      overflow: auto;
+    }
+    .table-scroll table { min-width: 960px; }
+    .table-scroll thead th {
+      position: sticky;
+      top: 0;
+      background: #201625;
+      color:#f5e7d7;
+      z-index: 10;
+    }
+    .table-scroll tbody td {
+      background:#fffdf8;
+    }
+    select.level-filter {
+      border-radius: 18px;
+      padding: 10px 16px;
+      border: 1px solid rgba(205,173,150,0.75);
+      background: #fffaf4;
+      color: #2f170a;
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.04);
+    }
+    .action-stack {
+      min-width: 290px;
+    }
+    .action-row {
+      display:flex;
+      gap:10px;
+      flex-wrap:nowrap;
+      justify-content:flex-end;
+    }
+  </style>
+  <script type="module">
+    import {mountNav, mountAdminMenu, mountAdminUser, api, requireAuth} from '/app/app-common.js';
+    const rows = () => document.getElementById('rows');
+    let pendingCourses = [];
+    let currentLevel = 'all';
+
+    const LEVEL_FILTERS = [
+      { value: 'all', label: 'Tất cả trình độ' },
+      { value: 'beginner', label: 'Beginner / Cơ bản' },
+      { value: 'intermediate', label: 'Intermediate / Trung cấp' },
+      { value: 'advanced', label: 'Advanced / Nâng cao' },
+      { value: '350+', label: 'TOEIC 350+' },
+      { value: '450+', label: 'TOEIC 450+' },
+      { value: '550+', label: 'TOEIC 550+' },
+      { value: '650+', label: 'TOEIC 650+' },
+      { value: '750+', label: 'TOEIC 750+' },
+      { value: '850+', label: 'TOEIC 850+' },
+      { value: '950+', label: 'TOEIC 950+' },
+    ];
+
+    const LEGACY_LEVELS = {
+      beginner: ['beginner','basic','co ban','foundation'],
+      intermediate: ['intermediate','trung cap','middle','medium'],
+      advanced: ['advanced','nang cao','expert']
+    };
+
+    function normalizeLevel(value){
+      return (value || '').toString().trim().toLowerCase();
+    }
+
+    function matchesFilter(course){
+      if(currentLevel === 'all') return true;
+      const lvl = normalizeLevel(course.level);
+      if(!lvl) return false;
+      if(currentLevel.endsWith('+')) return lvl === currentLevel;
+      const candidates = LEGACY_LEVELS[currentLevel] || [currentLevel];
+      return candidates.includes(lvl);
+    }
+
+    function levelLabel(level){
+      if(!level) return '—';
+      const digits = String(level).match(/(\d{2,3})/);
+      if(digits) return `${digits[1]}+`;
+      const norm = normalizeLevel(level);
+      if(LEGACY_LEVELS.beginner.includes(norm)) return 'Beginner';
+      if(LEGACY_LEVELS.intermediate.includes(norm)) return 'Intermediate';
+      if(LEGACY_LEVELS.advanced.includes(norm)) return 'Advanced';
+      return level;
+    }
+
+    function render(){
+      const list = (pendingCourses || []).filter(matchesFilter);
+      rows().innerHTML = list.map((c) => `
+        <tr>
+          <td>#${c.id}</td>
+          <td>${c.title}</td>
+          <td>${c.slug}</td>
+          <td>${levelLabel(c.level)}</td>
+          <td>
+            ${c.createdByName ? `<strong>${c.createdByName}</strong>` : ''}
+            <div class="muted small">${c.createdByEmail || ''}</div>
+          </td>
+          <td class="action-stack">
+            <div class="action-row">
+              <a class="btn secondary" href="/app/admin/manager-review-detail.html?id=${c.id}">Xem chi tiết</a>
+              <button class="btn approve" data-id="${c.id}">Duyệt</button>
+              <button class="btn danger reject" data-id="${c.id}">Từ chối</button>
+            </div>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="6" class="muted">Chưa có khóa học chờ duyệt</td></tr>';
+
+      document.querySelectorAll('.approve').forEach((btn) => btn.onclick = async (e) => {
+        const id = e.target.dataset.id;
+        await api(`/api/manager/courses/${id}/approve`, { method:'POST' });
+        load(true);
+      });
+      document.querySelectorAll('.reject').forEach((btn) => btn.onclick = async (e) => {
+        const id = e.target.dataset.id;
+        const note = prompt('Lý do từ chối? (tùy chọn)','');
+        await api(`/api/manager/courses/${id}/reject`, { method:'POST', body: JSON.stringify({ note }) });
+        load(true);
+      });
+    }
+
+    async function load(skipAuth = false){
+      if(!skipAuth && !requireAuth(['MANAGER'])) return;
+      pendingCourses = await api('/api/manager/courses/pending');
+      render();
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      mountNav('nav');
+      mountAdminMenu('adminMenu','manager-review');
+      mountAdminUser('adminUserCard');
+      const filter = document.getElementById('levelFilter');
+      filter.innerHTML = LEVEL_FILTERS.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('');
+      filter.value = currentLevel;
+      filter.addEventListener('change', (e)=>{
+        currentLevel = e.target.value;
+        render();
+      });
+      document.getElementById('refresh').onclick = ()=>load(true);
+      load();
+    });
+  </script>
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="eyebrow">Bảng điều khiển</span>
+        <strong>Quản lý LMS</strong>
+        <p class="muted">Không gian dành cho giảng viên & quản lý</p>
+      </div>
+      <div id="adminUserCard" class="admin-user-card"></div>
+      <nav id="adminMenu" class="admin-menu"></nav>
+      <div class="admin-sidebar-footer">
+        <a class="text-link" href="/app/index.html">← Về trang tổng quan</a>
+      </div>
+    </aside>
+    <div class="admin-main">
+      <div id="nav" data-variant="compact"></div>
+      <main class="admin-content">
+        <div class="admin-page-header">
+          <p class="muted">Quy trình kiểm duyệt</p>
+          <h1>Khóa học chờ duyệt</h1>
+        </div>
+        <div class="card">
+          <div class="row table-toolbar" style="justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+            <div>
+              <h2 style="margin:0">Danh sách đợi phê duyệt</h2>
+              <p class="muted" style="margin:4px 0 0">Theo dõi và xử lý yêu cầu nhanh chóng.</p>
+            </div>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              <select id="levelFilter" class="level-filter"></select>
+              <button class="btn secondary" id="refresh">Làm mới</button>
+            </div>
+          </div>
+          <div class="table-scroll" style="margin-top:16px">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Tiêu đề</th>
+                  <th>Slug</th>
+                  <th>Trình độ</th>
+                  <th>Người tạo</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
